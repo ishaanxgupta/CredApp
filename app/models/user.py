@@ -111,6 +111,8 @@ class UserInDB(UserBase):
     is_active: bool = Field(default=True, description="Whether user account is active")
     is_verified: bool = Field(default=False, description="Whether user email is verified")
     is_superuser: bool = Field(default=False, description="Whether user has superuser privileges")
+    roles: List[str] = Field(default_factory=list, description="List of role IDs assigned to user")
+    permissions: List[str] = Field(default_factory=list, description="List of permissions granted to user")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     last_login: Optional[datetime] = Field(None, description="Last login timestamp")
