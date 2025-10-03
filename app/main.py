@@ -17,6 +17,7 @@ from .api.v1.users import router as users_router
 from .api.v1.issuer import router as issuer_router
 from .api.v1.roles import router as roles_router
 from .api.v1.learner import router as learner_router
+from .api.v1.employer import router as employer_router
 from .utils.logger import get_logger
 
 # Initialize logger
@@ -76,6 +77,7 @@ app.include_router(users_router)
 app.include_router(issuer_router)
 app.include_router(roles_router)
 app.include_router(learner_router)
+app.include_router(employer_router)
 
 
 # Global exception handlers

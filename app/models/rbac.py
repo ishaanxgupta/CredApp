@@ -55,6 +55,13 @@ class PermissionType(str, Enum):
     # Analytics permissions
     ANALYTICS_VIEW = "analytics:view"
     ANALYTICS_EXPORT = "analytics:export"
+    
+    # Employer permissions
+    EMPLOYER_CANDIDATE_SEARCH = "employer:candidate_search"
+    EMPLOYER_CANDIDATE_VIEW = "employer:candidate_view"
+    EMPLOYER_CREDENTIAL_VERIFY = "employer:credential_verify"
+    EMPLOYER_DATA_EXPORT = "employer:data_export"
+    EMPLOYER_NOTIFICATION_VIEW = "employer:notification_view"
 
 
 class RoleBase(BaseModel):
@@ -261,6 +268,12 @@ DEFAULT_ROLES = {
         PermissionType.CREDENTIAL_VERIFY,
         PermissionType.USER_VIEW,
         PermissionType.ANALYTICS_VIEW,
+        PermissionType.ANALYTICS_EXPORT,
+        PermissionType.EMPLOYER_CANDIDATE_SEARCH,
+        PermissionType.EMPLOYER_CANDIDATE_VIEW,
+        PermissionType.EMPLOYER_CREDENTIAL_VERIFY,
+        PermissionType.EMPLOYER_DATA_EXPORT,
+        PermissionType.EMPLOYER_NOTIFICATION_VIEW,
     ],
     RoleType.ADMIN: [
         PermissionType.CREDENTIAL_CREATE,
