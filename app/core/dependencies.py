@@ -11,6 +11,7 @@ from bson import ObjectId
 
 from ..models.user import UserInDB
 from ..models.auth import TokenData
+from ..models.rbac import PermissionType, RoleType
 from ..core.security import verify_token
 from ..db.mongo import DatabaseDep
 from ..utils.logger import get_logger
@@ -185,58 +186,139 @@ class PermissionChecker:
     Permission checker class for role-based access control.
     """
     
-    def __init__(self, required_permissions: list[str]):
-        self.required_permissions = required_permissions
+    def __init__(self, required_permission: PermissionType):
+        self.required_permission = required_permission
     
-    async def __call__(self, current_user: UserInDB = Depends(get_current_active_user)) -> UserInDB:
+    async def __call__(
+        self, 
+        current_user: UserInDB = Depends(get_current_active_user),
+        db: AsyncIOMotorDatabase = DatabaseDep
+    ) -> UserInDB:
         """
-        Check if the current user has the required permissions.
+        Check if the current user has the required permission.
         
         Args:
             current_user: The current authenticated user
+            db: Database connection
             
         Returns:
-            UserInDB: The user if permissions are satisfied
+            UserInDB: The user if permission is satisfied
             
         Raises:
-            HTTPException: If user lacks required permissions
+            HTTPException: If user lacks required permission
         """
-        # For now, we'll implement basic permission checking
-        # In a full implementation, you'd check against user roles/permissions
+        from ..services.rbac_service import RBACService
         
-        if not current_user.is_superuser:
-            # Check if user has required permissions
-            # This is a placeholder - implement actual permission logic
-            user_permissions = []  # Get from user profile or roles
-            
-            for permission in self.required_permissions:
-                if permission not in user_permissions:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Permission '{permission}' required"
-                    )
+        rbac_service = RBACService(db)
+        
+        # Superuser has all permissions
+        if current_user.is_superuser:
+            return current_user
+        
+        # Check if user has required permission
+        has_permission = await rbac_service.check_permission(
+            str(current_user.id), 
+            self.required_permission
+        )
+        
+        if not has_permission:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission '{self.required_permission.value}' required"
+            )
         
         return current_user
 
 
-def require_permissions(permissions: list[str]):
+def require_permission(permission: PermissionType):
     """
     Dependency factory for permission-based access control.
     
     Args:
-        permissions: List of required permissions
+        permission: Required permission
         
     Returns:
         PermissionChecker instance
     """
-    return PermissionChecker(permissions)
+    return PermissionChecker(permission)
+
+
+class RoleChecker:
+    """
+    Role checker class for role-based access control.
+    """
+    
+    def __init__(self, required_role: RoleType):
+        self.required_role = required_role
+    
+    async def __call__(
+        self, 
+        current_user: UserInDB = Depends(get_current_active_user),
+        db: AsyncIOMotorDatabase = DatabaseDep
+    ) -> UserInDB:
+        """
+        Check if the current user has the required role.
+        
+        Args:
+            current_user: The current authenticated user
+            db: Database connection
+            
+        Returns:
+            UserInDB: The user if role is satisfied
+            
+        Raises:
+            HTTPException: If user lacks required role
+        """
+        from ..services.rbac_service import RBACService
+        
+        rbac_service = RBACService(db)
+        
+        # Superuser has all roles
+        if current_user.is_superuser:
+            return current_user
+        
+        # Get user roles
+        user_roles = await rbac_service.get_user_roles(str(current_user.id))
+        
+        # Check if user has required role
+        has_role = any(role["role_type"] == self.required_role for role in user_roles)
+        
+        if not has_role:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Role '{self.required_role.value}' required"
+            )
+        
+        return current_user
+
+
+def require_role(role: RoleType):
+    """
+    Dependency factory for role-based access control.
+    
+    Args:
+        role: Required role
+        
+    Returns:
+        RoleChecker instance
+    """
+    return RoleChecker(role)
 
 
 # Common permission dependencies
-require_admin = require_permissions(["admin"])
-require_credential_manager = require_permissions(["credential:manage"])
-require_credential_viewer = require_permissions(["credential:view"])
-require_user_manager = require_permissions(["user:manage"])
+require_admin = require_permission(PermissionType.SYSTEM_ADMIN)
+require_credential_manager = require_permission(PermissionType.CREDENTIAL_CREATE)
+require_credential_viewer = require_permission(PermissionType.CREDENTIAL_READ)
+require_user_manager = require_permission(PermissionType.USER_MANAGE)
+require_issuer = require_permission(PermissionType.ISSUER_MANAGE)
+require_issuer_manage = require_permission(PermissionType.ISSUER_MANAGE)
+require_analytics_viewer = require_permission(PermissionType.ANALYTICS_VIEW)
+
+# Common role dependencies
+require_issuer_role = require_role(RoleType.ISSUER)
+require_admin_role = require_role(RoleType.ADMIN)
+require_employer_role = require_role(RoleType.EMPLOYER)
+require_regulator_role = require_role(RoleType.REGULATOR)
 
 
 async def get_user_by_id(
@@ -281,3 +363,54 @@ async def get_user_by_email(
     except Exception as e:
         logger.error(f"Error getting user by email {email}: {e}")
         return None
+
+
+async def get_current_issuer(
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = DatabaseDep
+) -> UserInDB:
+    """
+    Get the current user as an issuer.
+    
+    Args:
+        current_user: The current authenticated user
+        db: Database connection
+        
+    Returns:
+        UserInDB: The issuer user
+        
+    Raises:
+        HTTPException: If user is not an issuer
+    """
+    from ..services.rbac_service import RBACService
+    
+    rbac_service = RBACService(db)
+    
+    # Check if user has issuer permissions
+    has_issuer_permission = await rbac_service.check_permission(
+        str(current_user.id), 
+        PermissionType.ISSUER_MANAGE
+    )
+    
+    if not has_issuer_permission and not current_user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Issuer privileges required"
+        )
+    
+    return current_user
+
+
+async def get_issuer_id(current_user: UserInDB = Depends(get_current_issuer)) -> str:
+    """
+    Get the issuer ID from the current user.
+    
+    Args:
+        current_user: The current issuer user
+        
+    Returns:
+        str: The issuer identifier
+    """
+    # For now, we'll use the user ID as the issuer ID
+    # In a full implementation, you might have a separate issuer entity
+    return str(current_user.id)

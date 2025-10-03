@@ -86,6 +86,8 @@ class AuthService:
                 "is_active": True,
                 "is_verified": False,
                 "is_superuser": False,
+                "roles": [],  # Default to no roles
+                "permissions": [],  # Default to no permissions
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),
                 "last_login": None,

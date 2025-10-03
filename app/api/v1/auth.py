@@ -7,7 +7,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from ...models.user import UserCreate
+from ...models.user import UserCreate, User
 from ...models.auth import LoginRequest, TokenRefresh, LoginResponse, Token
 from ...services.auth_service import AuthService
 from ...core.dependencies import get_current_user, get_current_active_user
@@ -211,7 +211,7 @@ async def logout(
 
 @router.get(
     "/me",
-    response_model=UserInDB,
+    response_model=User,
     summary="Get current user profile",
     description="Get the profile of the currently authenticated user"
 )
@@ -225,7 +225,7 @@ async def get_current_user_profile(
         current_user: The currently authenticated user
         
     Returns:
-        UserInDB: User profile information
+        User: User profile information
         
     Raises:
         HTTPException: If user is not authenticated
@@ -237,7 +237,7 @@ async def get_current_user_profile(
         
         logger.info(f"User profile retrieved: {current_user.email}")
         
-        return UserInDB(**user_data)
+        return User(**user_data)
         
     except Exception as e:
         logger.error(f"Get profile endpoint error: {e}")

@@ -14,6 +14,10 @@ from .db.mongo import connect_to_mongo, close_mongo_connection
 from .api.v1.health import router as health_router
 from .api.v1.auth import router as auth_router
 from .api.v1.users import router as users_router
+from .api.v1.issuer import router as issuer_router
+from .api.v1.roles import router as roles_router
+from .api.v1.learner import router as learner_router
+from .api.v1.employer import router as employer_router
 from .utils.logger import get_logger
 
 # Initialize logger
@@ -70,6 +74,10 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(users_router)
+app.include_router(issuer_router)
+app.include_router(roles_router)
+app.include_router(learner_router)
+app.include_router(employer_router)
 
 
 # Global exception handlers
