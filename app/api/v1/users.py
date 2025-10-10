@@ -7,7 +7,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from ...models.user import UserUpdate, UserProfile
+from ...models.user import UserUpdate, UserProfile, User
 from ...models.auth import PasswordChange
 from ...core.dependencies import get_current_active_user, get_user_by_id
 from ...core.security import verify_password, get_password_hash, validate_password_strength
@@ -145,7 +145,7 @@ async def get_user_profile(
 
 @router.put(
     "/profile",
-    response_model=UserInDB,
+    response_model=User,
     summary="Update user profile",
     description="Update user profile information"
 )
@@ -204,13 +204,13 @@ async def update_user_profile(
         
         user_obj = UserInDB(**updated_user)
         
-        # Prepare user data for response
+        # Prepare user data for response (exclude sensitive fields)
         user_data = user_obj.model_dump()
         user_data = prepare_user_response(user_data)
         
         logger.info(f"User profile updated: {current_user.email}")
         
-        return UserInDB(**user_data)
+        return User(**user_data)
         
     except HTTPException:
         raise

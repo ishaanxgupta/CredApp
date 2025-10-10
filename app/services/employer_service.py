@@ -33,7 +33,7 @@ class EmployerService:
         self.db = db
         self.users_collection = db.users
         self.credentials_collection = db.credentials
-        self.learner_profiles_collection = db.learner_profiles
+        self.learner_profiles_collection = db.learners  # Use same collection as LearnerService
         self.export_jobs_collection = db.export_jobs
         self.notifications_collection = db.employer_notifications
         self.verification_logs_collection = db.verification_logs
@@ -54,21 +54,19 @@ class EmployerService:
             List of matching candidates with their credentials
         """
         try:
-            # Build search query
-            query = {}
-            
-            # Search in learner profiles
+            # Build query for learner profiles
             learner_query = {}
+            
+            # Apply profile-based filters
             if search_request.location:
                 learner_query["location"] = {"$regex": search_request.location, "$options": "i"}
             if search_request.experience_years:
                 learner_query["experience_years"] = {"$gte": search_request.experience_years}
             
-            # Get learners matching profile criteria
-            learners = await self.learner_profiles_collection.find(learner_query).to_list(None)
-            learner_ids = [str(learner["user_id"]) for learner in learners]
+            # Get all learners from learner_profiles collection
+            learner_profiles = await self.learner_profiles_collection.find(learner_query).to_list(None)
             
-            if not learner_ids:
+            if not learner_profiles:
                 return CandidateSearchResponse(
                     candidates=[],
                     total=0,
@@ -76,6 +74,9 @@ class EmployerService:
                     limit=search_request.limit,
                     search_filters=search_request.model_dump()
                 )
+            
+            # Extract learner user IDs
+            learner_ids = [str(profile["user_id"]) for profile in learner_profiles]
             
             # Build credential query
             credential_query = {"learner_id": {"$in": [ObjectId(learner_id) for learner_id in learner_ids]}}
@@ -112,42 +113,68 @@ class EmployerService:
             
             # Build candidate profiles
             candidates = []
+            
+            # Get user details for all learners in one query
+            user_ids = [ObjectId(lid) for lid in learner_ids]
+            users = await self.users_collection.find({"_id": {"$in": user_ids}}).to_list(None)
+            user_dict = {str(user["_id"]): user for user in users}
+            
+            # Create a profile lookup dictionary
+            profile_dict = {str(profile["user_id"]): profile for profile in learner_profiles}
+            
             for learner_id in learner_ids:
-                if learner_id in learner_credentials:
-                    # Get learner profile
-                    learner_profile = next(
-                        (lp for lp in learners if str(lp["user_id"]) == learner_id), 
-                        None
-                    )
+                # Get user details from users collection
+                user = user_dict.get(learner_id)
+                if not user:
+                    # If user doesn't exist in users table, skip this learner
+                    continue
+                
+                # Get learner profile
+                learner_profile = profile_dict.get(learner_id, {})
+                
+                # Get credentials for this learner
+                creds = learner_credentials.get(learner_id, [])
+                
+                # Calculate skill summary
+                skill_summary = {}
+                highest_nsqf = 0
+                
+                for cred in creds:
+                    if cred.nsqf_level and cred.nsqf_level > highest_nsqf:
+                        highest_nsqf = cred.nsqf_level
                     
-                    if learner_profile:
-                        # Get user details
-                        user = await self.users_collection.find_one({"_id": ObjectId(learner_id)})
-                        if user:
-                            # Calculate skill summary
-                            skill_summary = {}
-                            highest_nsqf = 0
-                            
-                            for cred in learner_credentials[learner_id]:
-                                if cred.nsqf_level and cred.nsqf_level > highest_nsqf:
-                                    highest_nsqf = cred.nsqf_level
-                                
-                                for skill in cred.skill_tags:
-                                    skill_summary[skill] = skill_summary.get(skill, 0) + 1
-                            
-                            candidate = CandidateProfile(
-                                learner_id=ObjectId(learner_id),
-                                email=user["email"],
-                                full_name=user.get("full_name", "Unknown"),
-                                location=learner_profile.get("location"),
-                                experience_years=learner_profile.get("experience_years"),
-                                credentials=learner_credentials[learner_id],
-                                total_credentials=len(learner_credentials[learner_id]),
-                                highest_nsqf_level=highest_nsqf if highest_nsqf > 0 else None,
-                                skill_summary=skill_summary,
-                                last_updated=learner_profile.get("updated_at", datetime.utcnow())
-                            )
-                            candidates.append(candidate)
+                    for skill in cred.skill_tags:
+                        skill_summary[skill] = skill_summary.get(skill, 0) + 1
+                
+                # Convert location dict to string
+                location_dict = learner_profile.get("location")
+                location_str = None
+                if location_dict and isinstance(location_dict, dict):
+                    # Format: "City, Country" or whatever parts exist
+                    location_parts = []
+                    if location_dict.get("city"):
+                        location_parts.append(location_dict.get("city"))
+                    if location_dict.get("state"):
+                        location_parts.append(location_dict.get("state"))
+                    if location_dict.get("country"):
+                        location_parts.append(location_dict.get("country"))
+                    location_str = ", ".join(location_parts) if location_parts else None
+                elif isinstance(location_dict, str):
+                    location_str = location_dict
+                
+                candidate = CandidateProfile(
+                    learner_id=ObjectId(learner_id),
+                    email=user.get("email", learner_profile.get("email", "Unknown")),
+                    full_name=user.get("full_name", learner_profile.get("full_name", "Unknown")),
+                    location=location_str,
+                    experience_years=learner_profile.get("experience_years"),
+                    credentials=creds,
+                    total_credentials=len(creds),
+                    highest_nsqf_level=highest_nsqf if highest_nsqf > 0 else None,
+                    skill_summary=skill_summary,
+                    last_updated=learner_profile.get("updated_at", datetime.utcnow())
+                )
+                candidates.append(candidate)
             
             # Apply pagination
             total = len(candidates)

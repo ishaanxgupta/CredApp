@@ -4,7 +4,7 @@ Authentication and authorization dependencies for FastAPI routes.
 
 from datetime import datetime
 from typing import Optional
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from bson import ObjectId
@@ -414,3 +414,71 @@ async def get_issuer_id(current_user: UserInDB = Depends(get_current_issuer)) ->
     # For now, we'll use the user ID as the issuer ID
     # In a full implementation, you might have a separate issuer entity
     return str(current_user.id)
+
+
+async def validate_api_key(
+    x_api_key: Optional[str] = Header(None),
+    db: AsyncIOMotorDatabase = DatabaseDep
+) -> str:
+    """
+    Validate API key for issuer credential submission.
+    
+    Args:
+        x_api_key: API key from X-API-Key header
+        db: Database connection
+        
+    Returns:
+        str: User ID of the issuer
+        
+    Raises:
+        HTTPException: If API key is invalid or inactive
+    """
+    if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key is required. Please provide X-API-Key header",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    
+    try:
+        # Find API key in database
+        api_key_doc = await db.issuer_api_keys.find_one({
+            "key": x_api_key,
+            "is_active": True
+        })
+        
+        if not api_key_doc:
+            logger.warning(f"Invalid API key attempt")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or inactive API key",
+                headers={"WWW-Authenticate": "ApiKey"},
+            )
+        
+        # Update last used timestamp
+        await db.issuer_api_keys.update_one(
+            {"_id": api_key_doc["_id"]},
+            {"$set": {"last_used": datetime.utcnow()}}
+        )
+        
+        # Verify issuer is still verified
+        verification = await db.issuer_verifications.find_one({"user_id": api_key_doc["user_id"]})
+        
+        if not verification or verification.get("status") != "verified":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Issuer verification status is invalid"
+            )
+        
+        logger.info(f"API key validated for user: {api_key_doc['user_id']}")
+        
+        return str(api_key_doc["user_id"])
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"API key validation error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to validate API key"
+        )

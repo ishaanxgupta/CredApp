@@ -5,6 +5,10 @@ Handles credential submission, bulk upload, key management, and webhook configur
 
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from typing import Dict, Any
+from datetime import datetime
+from bson import ObjectId
+import secrets
 
 from ...models.issuer import (
     CredentialSubmission, BulkCredentialSubmission, PublicKeyRegistration,
@@ -12,10 +16,11 @@ from ...models.issuer import (
     BatchResponse, PublicKeyResponse, WebhookResponse
 )
 from ...services.issuer_service import IssuerService
-from ...core.dependencies import get_current_issuer, get_issuer_id
+from ...core.dependencies import get_current_issuer, get_issuer_id, get_current_active_user, validate_api_key
 from ...models.user import UserInDB
 from ...db.mongo import DatabaseDep
 from ...utils.logger import get_logger
+from pydantic import BaseModel
 
 logger = get_logger("issuer_api")
 
@@ -39,11 +44,11 @@ router = APIRouter(
     response_model=CredentialResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Submit single credential",
-    description="Submit a single credential for processing and verification"
+    description="Submit a single credential for processing and verification (requires API key)"
 )
 async def submit_credential(
     credential_data: CredentialSubmission,
-    issuer_id: str = Depends(get_issuer_id),
+    issuer_id: str = Depends(validate_api_key),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
@@ -83,11 +88,11 @@ async def submit_credential(
     response_model=BatchResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Bulk upload credentials",
-    description="Submit multiple credentials in bulk for processing"
+    description="Submit multiple credentials in bulk for processing (requires API key)"
 )
 async def submit_bulk_credentials(
     batch_data: BulkCredentialSubmission,
-    issuer_id: str = Depends(get_issuer_id),
+    issuer_id: str = Depends(validate_api_key),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
@@ -554,4 +559,249 @@ async def get_batch_status(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve batch status"
+        )
+
+
+# Verification and API Key Models
+class IssuerVerificationRequest(BaseModel):
+    organization_name: str
+    organization_type: str
+    registration_number: str
+    year_established: str
+    website: str
+    govt_id_type: str
+    govt_id_number: str
+    tax_id: str
+    registration_certificate_url: str
+    official_email: str
+    official_phone: str
+    address_line1: str
+    address_line2: str
+    city: str
+    state: str
+    postal_code: str
+    country: str
+    representative_name: str
+    representative_designation: str
+    representative_email: str
+    representative_phone: str
+    representative_id_proof_url: str
+
+
+class ApiKeyCreateRequest(BaseModel):
+    name: str
+
+
+# Verification Endpoints
+@router.post(
+    "/submit-verification",
+    summary="Submit verification request",
+    description="Submit issuer verification request with organization details"
+)
+async def submit_verification(
+    verification_data: IssuerVerificationRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """Submit issuer verification request."""
+    try:
+        # Create verification request document
+        verification_doc = {
+            "user_id": current_user.id,
+            "status": "pending",
+            "submitted_at": datetime.utcnow(),
+            **verification_data.model_dump()
+        }
+        
+        # Check if already submitted
+        existing = await db.issuer_verifications.find_one({"user_id": current_user.id})
+        
+        if existing:
+            # Update existing request
+            await db.issuer_verifications.update_one(
+                {"user_id": current_user.id},
+                {"$set": verification_doc}
+            )
+        else:
+            # Insert new request
+            await db.issuer_verifications.insert_one(verification_doc)
+        
+        logger.info(f"Verification request submitted for user: {current_user.email}")
+        
+        return {
+            "message": "Verification request submitted successfully",
+            "status": "pending"
+        }
+        
+    except Exception as e:
+        logger.error(f"Submit verification endpoint error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to submit verification request"
+        )
+
+
+@router.get(
+    "/verification-status",
+    summary="Get verification status",
+    description="Get current verification status of the issuer"
+)
+async def get_verification_status(
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """Get issuer verification status."""
+    try:
+        verification = await db.issuer_verifications.find_one({"user_id": current_user.id})
+        
+        if not verification:
+            return {"status": "not_submitted"}
+        
+        return {
+            "status": verification.get("status", "not_submitted"),
+            "submitted_at": verification.get("submitted_at"),
+            "verified_at": verification.get("verified_at"),
+            "rejected_at": verification.get("rejected_at"),
+            "rejection_reason": verification.get("rejection_reason")
+        }
+        
+    except Exception as e:
+        logger.error(f"Get verification status endpoint error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve verification status"
+        )
+
+
+# API Key Management Endpoints
+@router.post(
+    "/api-keys",
+    summary="Generate API key",
+    description="Generate a new API key for issuer authentication"
+)
+async def generate_api_key(
+    key_request: ApiKeyCreateRequest,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """Generate a new API key for the issuer."""
+    try:
+        # Check if issuer is verified
+        verification = await db.issuer_verifications.find_one({"user_id": current_user.id})
+        
+        if not verification or verification.get("status") != "verified":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Issuer must be verified before generating API keys"
+            )
+        
+        # Generate secure API key
+        api_key = f"ck_{secrets.token_urlsafe(32)}"
+        
+        # Store API key
+        api_key_doc = {
+            "user_id": current_user.id,
+            "key": api_key,
+            "name": key_request.name,
+            "created_at": datetime.utcnow(),
+            "last_used": None,
+            "is_active": True
+        }
+        
+        result = await db.issuer_api_keys.insert_one(api_key_doc)
+        
+        logger.info(f"API key generated for user: {current_user.email}")
+        
+        return {
+            "api_key": api_key,
+            "key_id": str(result.inserted_id),
+            "message": "API key generated successfully. Store it securely as it won't be shown again."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Generate API key endpoint error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate API key"
+        )
+
+
+@router.get(
+    "/api-keys",
+    summary="List API keys",
+    description="Get all API keys for the issuer"
+)
+async def list_api_keys(
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """List all API keys for the issuer."""
+    try:
+        keys = await db.issuer_api_keys.find({"user_id": current_user.id, "is_active": True}).to_list(None)
+        
+        api_keys = []
+        for key in keys:
+            api_keys.append({
+                "_id": str(key["_id"]),
+                "key": key["key"],
+                "name": key["name"],
+                "created_at": key["created_at"].isoformat(),
+                "last_used": key["last_used"].isoformat() if key.get("last_used") else None,
+                "is_active": key["is_active"]
+            })
+        
+        return {"api_keys": api_keys}
+        
+    except Exception as e:
+        logger.error(f"List API keys endpoint error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve API keys"
+        )
+
+
+@router.delete(
+    "/api-keys/{key_id}",
+    summary="Revoke API key",
+    description="Revoke an existing API key"
+)
+async def revoke_api_key(
+    key_id: str,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """Revoke an API key."""
+    try:
+        result = await db.issuer_api_keys.update_one(
+            {
+                "_id": ObjectId(key_id),
+                "user_id": current_user.id
+            },
+            {
+                "$set": {
+                    "is_active": False,
+                    "revoked_at": datetime.utcnow()
+                }
+            }
+        )
+        
+        if result.modified_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="API key not found"
+            )
+        
+        logger.info(f"API key revoked: {key_id}")
+        
+        return {"message": "API key revoked successfully"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Revoke API key endpoint error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to revoke API key"
         )
