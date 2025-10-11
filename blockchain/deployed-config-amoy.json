@@ -1,0 +1,11 @@
+{
+  "issuerRegistryAddress": "0x5868c5Fa4eeF9db8Ca998F16845CCffA3B85C472",
+  "credentialRegistryAddress": "0xE70530BdAe091D597840FD787f5Dafa7c6Ef796A",
+  "network": "amoy",
+  "chainId": "80002",
+  "deployer": "0x3AF15A0035a717ddb5b4B4D727B7EE94A52Cc4e3",
+  "credentialRegistryTxHash": "0x4289454ce1aa3b9b622cf84a6f4b043e5318d06ed8ea625f452fbbc7947b15b0",
+  "gasUsed": "2310695",
+  "timestamp": "2025-10-10T17:46:49.111Z",
+  "rpcUrl": "https://rpc-amoy.polygon.technology"
+}
