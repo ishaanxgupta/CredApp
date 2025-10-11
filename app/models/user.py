@@ -84,6 +84,10 @@ class UserUpdate(BaseModel):
     gender: Optional[str] = None
     address: Optional[dict] = None
     profile_picture_url: Optional[str] = None
+    preferred_nsqf_level: Optional[float] = Field(None, ge=1, le=10, description="Learner's preferred NSQF level")
+    skills: Optional[List[str]] = Field(None, description="List of learner's skills")
+    education: Optional[str] = Field(None, max_length=200, description="Learner's educational background")
+    experience: Optional[str] = Field(None, max_length=500, description="Learner's professional experience")
     
     model_config = ConfigDict(
         json_encoders={ObjectId: str},
@@ -118,6 +122,11 @@ class UserInDB(UserBase):
     last_login: Optional[datetime] = Field(None, description="Last login timestamp")
     login_attempts: int = Field(default=0, description="Number of failed login attempts")
     locked_until: Optional[datetime] = Field(None, description="Account lock expiration time")
+    # NSQF and profile fields
+    preferred_nsqf_level: Optional[float] = Field(None, description="Learner's preferred NSQF level")
+    skills: List[str] = Field(default_factory=list, description="List of learner's skills")
+    education: Optional[str] = Field(None, description="Learner's educational background")
+    experience: Optional[str] = Field(None, description="Learner's professional experience")
     
     model_config = ConfigDict(
         populate_by_name=True,
@@ -150,6 +159,9 @@ class UserProfile(User):
     verified_credentials: int = Field(default=0, description="Number of verified credentials")
     skills: List[str] = Field(default_factory=list, description="List of user skills")
     achievements: List[dict] = Field(default_factory=list, description="User achievements")
+    preferred_nsqf_level: Optional[float] = Field(None, description="Learner's preferred NSQF level")
+    education: Optional[str] = Field(None, description="Learner's educational background")
+    experience: Optional[str] = Field(None, description="Learner's professional experience")
     
     model_config = ConfigDict(
         json_schema_extra={

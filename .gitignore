@@ -400,3 +400,9 @@ $RECYCLE.BIN/
 app/__pycache__/
 app/*/__pycache__/
 app/*/*/__pycache__/
+
+
+# Ignore generated or local-only data
+scripts/
+constraints.txt
+.env.example
