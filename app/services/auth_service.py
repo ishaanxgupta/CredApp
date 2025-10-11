@@ -73,6 +73,19 @@ class AuthService:
             # Hash password
             hashed_password = get_password_hash(user_data.password)
             
+            # Check if KYC verification data is provided and complete
+            kyc_data = user_data.kyc_verification if hasattr(user_data, 'kyc_verification') else None
+            kyc_verified = False
+            
+            if kyc_data:
+                # Check if all required verifications are complete
+                kyc_verified = bool(
+                    kyc_data.get('documentVerification') and
+                    kyc_data.get('faceVerification') and
+                    kyc_data.get('emailVerification') and
+                    kyc_data.get('mobileVerification')
+                )
+            
             # Create user document
             user_doc = {
                 "email": user_data.email.lower(),
@@ -88,6 +101,8 @@ class AuthService:
                 "is_superuser": False,
                 "roles": [],  # Default to no roles
                 "permissions": [],  # Default to no permissions
+                "kyc_verification": kyc_data,
+                "kyc_verified": kyc_verified,
                 "created_at": datetime.utcnow(),
                 "updated_at": datetime.utcnow(),
                 "last_login": None,

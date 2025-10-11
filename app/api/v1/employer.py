@@ -41,46 +41,39 @@ router = APIRouter(
     "/candidates",
     response_model=CandidateSearchResponse,
     summary="Get all candidates",
-    description="Get all candidates with optional filtering"
+    description="Get all available candidates/learners with pagination for employer dashboard"
 )
-async def get_candidates(
-    skill: str = Query(None, description="Skill to search for"),
-    nsqf_level: int = Query(None, ge=1, le=10, description="NSQF level filter"),
-    issuer_id: str = Query(None, description="Issuer ID filter"),
-    location: str = Query(None, description="Geographic location filter"),
-    experience_years: int = Query(None, ge=0, description="Minimum experience years"),
+async def get_all_candidates(
     skip: int = Query(0, ge=0, description="Number of records to skip"),
     limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
     current_user: UserInDB = Depends(require_permission(PermissionType.EMPLOYER_CANDIDATE_SEARCH)),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
-    Get all candidates with optional filtering. This is a convenience endpoint
-    that wraps the search functionality for frontend compatibility.
+    Get all available candidates/learners for the employer dashboard.
+    
+    This endpoint returns all learners in the system with their basic profile information
+    and credentials, useful for displaying a complete list on the employer dashboard.
     
     Args:
-        skill: Skill to search for
-        nsqf_level: NSQF level filter
-        issuer_id: Issuer ID filter
-        location: Geographic location filter
-        experience_years: Minimum experience years
-        skip: Number of records to skip
-        limit: Maximum number of records to return
+        skip: Number of records to skip for pagination
+        limit: Maximum number of records to return (max 100)
         current_user: The current authenticated user
         db: Database connection
         
     Returns:
-        List of matching candidates with their credentials
+        List of all candidates with their credentials and pagination metadata
     """
     try:
         employer_service = EmployerService(db)
         
+        # Create an empty search request to get all candidates
         search_request = CandidateSearchRequest(
-            skill=skill,
-            nsqf_level=nsqf_level,
-            issuer_id=issuer_id,
-            location=location,
-            experience_years=experience_years,
+            skill=None,
+            nsqf_level=None,
+            issuer_id=None,
+            location=None,
+            experience_years=None,
             skip=skip,
             limit=limit
         )
@@ -90,11 +83,11 @@ async def get_candidates(
             search_request
         )
         
-        logger.info(f"Candidates retrieved for employer: {current_user.email}")
+        logger.info(f"Retrieved {len(result.candidates)} candidates for employer dashboard: {current_user.email}")
         return result
         
     except Exception as e:
-        logger.error(f"Get candidates endpoint error: {e}")
+        logger.error(f"Get all candidates endpoint error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve candidates"
