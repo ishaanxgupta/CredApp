@@ -38,6 +38,63 @@ router = APIRouter(
 
 
 @router.get(
+    "/candidates",
+    response_model=CandidateSearchResponse,
+    summary="Get all candidates",
+    description="Get all available candidates/learners with pagination for employer dashboard"
+)
+async def get_all_candidates(
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
+    current_user: UserInDB = Depends(require_permission(PermissionType.EMPLOYER_CANDIDATE_SEARCH)),
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """
+    Get all available candidates/learners for the employer dashboard.
+    
+    This endpoint returns all learners in the system with their basic profile information
+    and credentials, useful for displaying a complete list on the employer dashboard.
+    
+    Args:
+        skip: Number of records to skip for pagination
+        limit: Maximum number of records to return (max 100)
+        current_user: The current authenticated user
+        db: Database connection
+        
+    Returns:
+        List of all candidates with their credentials and pagination metadata
+    """
+    try:
+        employer_service = EmployerService(db)
+        
+        # Create an empty search request to get all candidates
+        search_request = CandidateSearchRequest(
+            skill=None,
+            nsqf_level=None,
+            issuer_id=None,
+            location=None,
+            experience_years=None,
+            skip=skip,
+            limit=limit
+        )
+        
+        result = await employer_service.search_candidates(
+            str(current_user.id),
+            search_request
+        )
+        
+        logger.info(f"Retrieved {len(result.candidates)} candidates for employer dashboard: {current_user.email}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Get all candidates endpoint error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve candidates"
+        )
+
+
+@router.get(
     "/candidates/search",
     response_model=CandidateSearchResponse,
     summary="Search candidates",
