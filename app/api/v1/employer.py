@@ -38,6 +38,70 @@ router = APIRouter(
 
 
 @router.get(
+    "/candidates",
+    response_model=CandidateSearchResponse,
+    summary="Get all candidates",
+    description="Get all candidates with optional filtering"
+)
+async def get_candidates(
+    skill: str = Query(None, description="Skill to search for"),
+    nsqf_level: int = Query(None, ge=1, le=10, description="NSQF level filter"),
+    issuer_id: str = Query(None, description="Issuer ID filter"),
+    location: str = Query(None, description="Geographic location filter"),
+    experience_years: int = Query(None, ge=0, description="Minimum experience years"),
+    skip: int = Query(0, ge=0, description="Number of records to skip"),
+    limit: int = Query(50, ge=1, le=100, description="Maximum number of records to return"),
+    current_user: UserInDB = Depends(require_permission(PermissionType.EMPLOYER_CANDIDATE_SEARCH)),
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """
+    Get all candidates with optional filtering. This is a convenience endpoint
+    that wraps the search functionality for frontend compatibility.
+    
+    Args:
+        skill: Skill to search for
+        nsqf_level: NSQF level filter
+        issuer_id: Issuer ID filter
+        location: Geographic location filter
+        experience_years: Minimum experience years
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        current_user: The current authenticated user
+        db: Database connection
+        
+    Returns:
+        List of matching candidates with their credentials
+    """
+    try:
+        employer_service = EmployerService(db)
+        
+        search_request = CandidateSearchRequest(
+            skill=skill,
+            nsqf_level=nsqf_level,
+            issuer_id=issuer_id,
+            location=location,
+            experience_years=experience_years,
+            skip=skip,
+            limit=limit
+        )
+        
+        result = await employer_service.search_candidates(
+            str(current_user.id),
+            search_request
+        )
+        
+        logger.info(f"Candidates retrieved for employer: {current_user.email}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Get candidates endpoint error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve candidates"
+        )
+
+
+@router.get(
     "/candidates/search",
     response_model=CandidateSearchResponse,
     summary="Search candidates",
