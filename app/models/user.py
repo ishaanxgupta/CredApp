@@ -3,8 +3,8 @@ User models and schemas for authentication and user management.
 """
 
 from datetime import datetime
-from typing import Optional, List
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from typing import Optional, List, Union
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from bson import ObjectId
 
 
@@ -36,10 +36,30 @@ class UserBase(BaseModel):
     email: EmailStr = Field(..., description="User email address")
     full_name: str = Field(..., min_length=2, max_length=100, description="User's full name")
     phone_number: Optional[str] = Field(None, description="User's phone number")
-    date_of_birth: Optional[datetime] = Field(None, description="User's date of birth")
+    date_of_birth: Optional[Union[datetime, str]] = Field(None, description="User's date of birth")
     gender: Optional[str] = Field(None, description="User's gender")
     address: Optional[dict] = Field(None, description="User's address information")
     profile_picture_url: Optional[str] = Field(None, description="URL to user's profile picture")
+    
+    @field_validator('date_of_birth', mode='before')
+    def parse_date_of_birth(cls, v):
+        """Convert date string to datetime if needed"""
+        if v is None:
+            return v
+        if isinstance(v, datetime):
+            return v
+        if isinstance(v, str):
+            # Try parsing as date only (YYYY-MM-DD)
+            try:
+                from datetime import datetime as dt
+                return dt.strptime(v, '%Y-%m-%d')
+            except ValueError:
+                # Try parsing as full datetime
+                try:
+                    return dt.fromisoformat(v.replace('Z', '+00:00'))
+                except:
+                    return v
+        return v
     
     model_config = ConfigDict(
         json_encoders={ObjectId: str},
@@ -52,6 +72,7 @@ class UserCreate(UserBase):
     
     password: str = Field(..., min_length=8, max_length=72, description="User password")
     confirm_password: str = Field(..., description="Password confirmation")
+    kyc_verification: Optional[dict] = Field(None, description="KYC verification data")
     
     model_config = ConfigDict(
         json_schema_extra={
@@ -61,7 +82,7 @@ class UserCreate(UserBase):
                 "password": "SecurePassword123!",
                 "confirm_password": "SecurePassword123!",
                 "phone_number": "+1234567890",
-                "date_of_birth": "1990-01-15T00:00:00Z",
+                "date_of_birth": "1990-01-15",
                 "gender": "male",
                 "address": {
                     "street": "123 Main St",
@@ -80,7 +101,7 @@ class UserUpdate(BaseModel):
     
     full_name: Optional[str] = Field(None, min_length=2, max_length=100)
     phone_number: Optional[str] = None
-    date_of_birth: Optional[datetime] = None
+    date_of_birth: Optional[Union[datetime, str]] = None
     gender: Optional[str] = None
     address: Optional[dict] = None
     profile_picture_url: Optional[str] = None
@@ -88,6 +109,26 @@ class UserUpdate(BaseModel):
     skills: Optional[List[str]] = Field(None, description="List of learner's skills")
     education: Optional[str] = Field(None, max_length=200, description="Learner's educational background")
     experience: Optional[str] = Field(None, max_length=500, description="Learner's professional experience")
+    
+    @field_validator('date_of_birth', mode='before')
+    def parse_date_of_birth(cls, v):
+        """Convert date string to datetime if needed"""
+        if v is None:
+            return v
+        if isinstance(v, datetime):
+            return v
+        if isinstance(v, str):
+            # Try parsing as date only (YYYY-MM-DD)
+            try:
+                from datetime import datetime as dt
+                return dt.strptime(v, '%Y-%m-%d')
+            except ValueError:
+                # Try parsing as full datetime
+                try:
+                    return dt.fromisoformat(v.replace('Z', '+00:00'))
+                except:
+                    return v
+        return v
     
     model_config = ConfigDict(
         json_encoders={ObjectId: str},
@@ -117,6 +158,8 @@ class UserInDB(UserBase):
     is_superuser: bool = Field(default=False, description="Whether user has superuser privileges")
     roles: List[str] = Field(default_factory=list, description="List of role IDs assigned to user")
     permissions: List[str] = Field(default_factory=list, description="List of permissions granted to user")
+    kyc_verification: Optional[dict] = Field(None, description="KYC verification data")
+    kyc_verified: bool = Field(default=False, description="Whether KYC is completed")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     last_login: Optional[datetime] = Field(None, description="Last login timestamp")
@@ -141,6 +184,7 @@ class User(UserBase):
     id: PyObjectId = Field(..., alias="_id")
     is_active: bool = Field(default=True)
     is_verified: bool = Field(default=False)
+    kyc_verified: bool = Field(default=False)
     created_at: datetime
     updated_at: datetime
     last_login: Optional[datetime] = None
