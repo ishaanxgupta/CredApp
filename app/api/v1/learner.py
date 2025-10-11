@@ -549,3 +549,47 @@ async def search_credentials(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to search credentials"
         )
+
+
+@router.get(
+    "/download-portfolio",
+    summary="Download portfolio as PDF",
+    description="Generate and download learner's portfolio as a PDF file"
+)
+async def download_portfolio(
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """
+    Generate and download the learner's portfolio as a PDF.
+    
+    Args:
+        current_user: The current authenticated user
+        db: Database connection
+        
+    Returns:
+        PDF file response
+    """
+    try:
+        from fastapi.responses import Response
+        learner_service = LearnerService(db)
+        
+        # Generate PDF portfolio
+        pdf_content = await learner_service.generate_portfolio_pdf(str(current_user.id))
+        
+        logger.info(f"Portfolio PDF generated for user: {current_user.email}")
+        
+        return Response(
+            content=pdf_content,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename={current_user.full_name or 'portfolio'}_portfolio.pdf"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Download portfolio endpoint error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to generate portfolio PDF"
+        )

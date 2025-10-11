@@ -617,3 +617,203 @@ class LearnerService:
             return 0.8
         else:
             return 0.5
+    
+    async def generate_portfolio_pdf(self, user_id: str) -> bytes:
+        """
+        Generate a PDF portfolio for the learner.
+        
+        Args:
+            user_id: User identifier
+            
+        Returns:
+            PDF content as bytes
+        """
+        try:
+            from reportlab.lib.pagesizes import letter, A4
+            from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+            from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+            from reportlab.lib.units import inch
+            from reportlab.lib import colors
+            from io import BytesIO
+            
+            # Get learner profile and credentials
+            profile = await self.get_learner_profile(user_id)
+            credentials = await self.get_learner_credentials(user_id)
+            
+            if not profile:
+                raise ValueError("Learner profile not found")
+            
+            # Create PDF buffer
+            buffer = BytesIO()
+            doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=72, leftMargin=72,
+                                  topMargin=72, bottomMargin=18)
+            
+            # Get styles
+            styles = getSampleStyleSheet()
+            title_style = ParagraphStyle(
+                'CustomTitle',
+                parent=styles['Heading1'],
+                fontSize=24,
+                spaceAfter=30,
+                textColor=colors.darkblue
+            )
+            
+            heading_style = ParagraphStyle(
+                'CustomHeading',
+                parent=styles['Heading2'],
+                fontSize=16,
+                spaceAfter=12,
+                textColor=colors.darkblue
+            )
+            
+            # Build PDF content
+            story = []
+            
+            # Title
+            story.append(Paragraph("Professional Portfolio", title_style))
+            story.append(Spacer(1, 12))
+            
+            # Personal Information
+            story.append(Paragraph("Personal Information", heading_style))
+            personal_data = [
+                ['Name:', profile.get('full_name', 'N/A')],
+                ['Email:', profile.get('email', 'N/A')],
+                ['Phone:', profile.get('phone_number', 'N/A')],
+                ['Location:', f"{profile.get('location', {}).get('city', '')}, {profile.get('location', {}).get('country', '')}".strip(', ')],
+            ]
+            
+            personal_table = Table(personal_data, colWidths=[1.5*inch, 4*inch])
+            personal_table.setStyle(TableStyle([
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            story.append(personal_table)
+            story.append(Spacer(1, 20))
+            
+            # Bio
+            if profile.get('bio'):
+                story.append(Paragraph("About", heading_style))
+                story.append(Paragraph(profile['bio'], styles['Normal']))
+                story.append(Spacer(1, 20))
+            
+            # Education
+            if profile.get('education'):
+                story.append(Paragraph("Education", heading_style))
+                edu = profile['education']
+                if isinstance(edu, dict):
+                    edu_text = f"{edu.get('degree', '')} from {edu.get('institution', '')} ({edu.get('year', '')})"
+                else:
+                    edu_text = str(edu)
+                story.append(Paragraph(edu_text, styles['Normal']))
+                story.append(Spacer(1, 20))
+            
+            # Skills
+            if profile.get('skills'):
+                story.append(Paragraph("Skills", heading_style))
+                skills_text = ", ".join(profile['skills'])
+                story.append(Paragraph(skills_text, styles['Normal']))
+                story.append(Spacer(1, 20))
+            
+            # Credentials
+            if credentials:
+                story.append(Paragraph("Credentials & Certifications", heading_style))
+                
+                cred_data = [['Title', 'Issuer', 'Status', 'Issue Date']]
+                for cred in credentials:
+                    issue_date = cred.get('issued_date', '')
+                    if isinstance(issue_date, datetime):
+                        issue_date = issue_date.strftime('%Y-%m-%d')
+                    
+                    cred_data.append([
+                        cred.get('credential_title', 'N/A'),
+                        cred.get('issuer_name', 'N/A'),
+                        cred.get('status', 'N/A').title(),
+                        str(issue_date)
+                    ])
+                
+                cred_table = Table(cred_data, colWidths=[2*inch, 1.5*inch, 1*inch, 1*inch])
+                cred_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 9),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black)
+                ]))
+                story.append(cred_table)
+            
+            # Footer
+            story.append(Spacer(1, 30))
+            story.append(Paragraph(
+                f"Generated on {datetime.now().strftime('%B %d, %Y')} via Credify Platform",
+                styles['Normal']
+            ))
+            
+            # Build PDF
+            doc.build(story)
+            
+            # Get PDF content
+            pdf_content = buffer.getvalue()
+            buffer.close()
+            
+            logger.info(f"Portfolio PDF generated for user: {user_id}")
+            return pdf_content
+            
+        except ImportError:
+            # Fallback if reportlab is not installed
+            logger.warning("ReportLab not installed, generating simple PDF")
+            return self._generate_simple_pdf(profile, credentials)
+        except Exception as e:
+            logger.error(f"Error generating portfolio PDF: {e}")
+            raise
+    
+    def _generate_simple_pdf(self, profile: Dict[str, Any], credentials: List[Dict[str, Any]]) -> bytes:
+        """Generate a simple text-based PDF fallback."""
+        try:
+            from fpdf import FPDF
+            
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font('Arial', 'B', 16)
+            
+            # Title
+            pdf.cell(0, 10, 'Professional Portfolio', 0, 1, 'C')
+            pdf.ln(10)
+            
+            # Personal Info
+            pdf.set_font('Arial', 'B', 12)
+            pdf.cell(0, 10, 'Personal Information', 0, 1)
+            pdf.set_font('Arial', '', 10)
+            pdf.cell(0, 8, f"Name: {profile.get('full_name', 'N/A')}", 0, 1)
+            pdf.cell(0, 8, f"Email: {profile.get('email', 'N/A')}", 0, 1)
+            pdf.ln(5)
+            
+            # Credentials
+            if credentials:
+                pdf.set_font('Arial', 'B', 12)
+                pdf.cell(0, 10, 'Credentials', 0, 1)
+                pdf.set_font('Arial', '', 10)
+                
+                for cred in credentials:
+                    pdf.cell(0, 8, f"• {cred.get('credential_title', 'N/A')}", 0, 1)
+            
+            return pdf.output(dest='S').encode('latin1')
+            
+        except ImportError:
+            # Ultimate fallback - return a simple text file as bytes
+            content = f"""
+PROFESSIONAL PORTFOLIO
+
+Name: {profile.get('full_name', 'N/A')}
+Email: {profile.get('email', 'N/A')}
+
+CREDENTIALS:
+"""
+            for cred in credentials:
+                content += f"• {cred.get('credential_title', 'N/A')}\n"
+            
+            content += f"\nGenerated on {datetime.now().strftime('%B %d, %Y')}"
+            return content.encode('utf-8')
