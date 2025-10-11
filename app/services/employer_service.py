@@ -33,7 +33,7 @@ class EmployerService:
         self.db = db
         self.users_collection = db.users
         self.credentials_collection = db.credentials
-        self.learner_profiles_collection = db.learner_profiles
+        self.learners_collection = db.learners  # Updated to match your actual collection name
         self.export_jobs_collection = db.export_jobs
         self.notifications_collection = db.employer_notifications
         self.verification_logs_collection = db.verification_logs
@@ -57,25 +57,22 @@ class EmployerService:
             # Build search query
             query = {}
             
-            # Search in learner profiles
+            # Search in learners collection
             learner_query = {}
             if search_request.location:
-                learner_query["location"] = {"$regex": search_request.location, "$options": "i"}
-            if search_request.experience_years:
-                learner_query["experience_years"] = {"$gte": search_request.experience_years}
+                learner_query["$or"] = [
+                    {"location.city": {"$regex": search_request.location, "$options": "i"}},
+                    {"location.country": {"$regex": search_request.location, "$options": "i"}}
+                ]
             
             # Get learners matching profile criteria
-            learners = await self.learner_profiles_collection.find(learner_query).to_list(None)
+            learners = await self.learners_collection.find(learner_query).to_list(None)
             learner_ids = [str(learner["user_id"]) for learner in learners]
             
             if not learner_ids:
-                return CandidateSearchResponse(
-                    candidates=[],
-                    total=0,
-                    skip=search_request.skip,
-                    limit=search_request.limit,
-                    search_filters=search_request.model_dump()
-                )
+                # If no specific location filter, get all learners
+                learners = await self.learners_collection.find({}).to_list(None)
+                learner_ids = [str(learner["user_id"]) for learner in learners]
             
             # Build credential query
             credential_query = {"learner_id": {"$in": [ObjectId(learner_id) for learner_id in learner_ids]}}
@@ -121,33 +118,39 @@ class EmployerService:
                     )
                     
                     if learner_profile:
-                        # Get user details
-                        user = await self.users_collection.find_one({"_id": ObjectId(learner_id)})
-                        if user:
-                            # Calculate skill summary
-                            skill_summary = {}
-                            highest_nsqf = 0
+                        # Calculate skill summary
+                        skill_summary = {}
+                        highest_nsqf = 0
+                        
+                        for cred in learner_credentials[learner_id]:
+                            if cred.nsqf_level and cred.nsqf_level > highest_nsqf:
+                                highest_nsqf = cred.nsqf_level
                             
-                            for cred in learner_credentials[learner_id]:
-                                if cred.nsqf_level and cred.nsqf_level > highest_nsqf:
-                                    highest_nsqf = cred.nsqf_level
-                                
-                                for skill in cred.skill_tags:
-                                    skill_summary[skill] = skill_summary.get(skill, 0) + 1
-                            
-                            candidate = CandidateProfile(
-                                learner_id=ObjectId(learner_id),
-                                email=user["email"],
-                                full_name=user.get("full_name", "Unknown"),
-                                location=learner_profile.get("location"),
-                                experience_years=learner_profile.get("experience_years"),
-                                credentials=learner_credentials[learner_id],
-                                total_credentials=len(learner_credentials[learner_id]),
-                                highest_nsqf_level=highest_nsqf if highest_nsqf > 0 else None,
-                                skill_summary=skill_summary,
-                                last_updated=learner_profile.get("updated_at", datetime.utcnow())
-                            )
-                            candidates.append(candidate)
+                            for skill in cred.skill_tags:
+                                skill_summary[skill] = skill_summary.get(skill, 0) + 1
+                        
+                        # Extract location info
+                        location_str = None
+                        if learner_profile.get("location"):
+                            loc = learner_profile["location"]
+                            if isinstance(loc, dict):
+                                city = loc.get("city", "")
+                                country = loc.get("country", "")
+                                location_str = f"{city}, {country}".strip(", ")
+                        
+                        candidate = CandidateProfile(
+                            learner_id=ObjectId(learner_id),
+                            email=learner_profile.get("email", "Unknown"),
+                            full_name=learner_profile.get("full_name", "Unknown"),
+                            location=location_str,
+                            experience_years=None,  # Not available in your current schema
+                            credentials=learner_credentials[learner_id],
+                            total_credentials=len(learner_credentials[learner_id]),
+                            highest_nsqf_level=highest_nsqf if highest_nsqf > 0 else None,
+                            skill_summary=skill_summary,
+                            last_updated=learner_profile.get("updated_at", datetime.utcnow())
+                        )
+                        candidates.append(candidate)
             
             # Apply pagination
             total = len(candidates)
