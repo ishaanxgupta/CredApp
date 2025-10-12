@@ -35,6 +35,60 @@ router = APIRouter(
 )
 
 
+@router.get(
+    "/",
+    summary="List all roles",
+    description="Get a list of all active roles (public endpoint)"
+)
+async def list_roles(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """
+    List all active roles. This is a public endpoint for role selection during registration.
+    
+    Args:
+        skip: Number of records to skip
+        limit: Maximum number of records to return
+        db: Database connection
+        
+    Returns:
+        Dict containing list of active roles and pagination info
+    """
+    try:
+        rbac_service = RBACService(db)
+        # Only return active roles, exclude system/admin roles for public access
+        roles = await rbac_service.get_roles(skip, limit, is_active=True)
+        
+        # Filter out admin and superuser roles from public listing
+        # Use .get() with default to handle missing role_type field
+        public_roles = []
+        for role in roles:
+            role_type = role.get("role_type", "")
+            # Skip admin, superuser, and regulator roles
+            if role_type not in ["admin", "superuser", "regulator"]:
+                # Ensure role_type is present (for backward compatibility)
+                if not role_type and role.get("name"):
+                    # Infer role_type from name if missing
+                    role["role_type"] = role.get("name", "").lower()
+                public_roles.append(role)
+        
+        return {
+            "roles": public_roles,
+            "skip": skip,
+            "limit": limit,
+            "total": len(public_roles)
+        }
+        
+    except Exception as e:
+        logger.error(f"List roles endpoint error: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve roles: {str(e)}"
+        )
+
+
 @router.post(
     "/",
     response_model=RoleResponse,
@@ -80,46 +134,56 @@ async def create_role(
 
 
 @router.get(
-    "/",
-    summary="List all roles",
-    description="Get a list of all roles with pagination"
+    "/by-type/{role_type}",
+    summary="Get role by type",
+    description="Get role details by role type (public endpoint)"
 )
-async def list_roles(
-    skip: int = 0,
-    limit: int = 100,
-    is_active: bool = None,
-    current_user: UserInDB = Depends(require_admin),
+async def get_role_by_type(
+    role_type: str,
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
-    List all roles.
+    Get a role by its type. Public endpoint for registration flow.
     
     Args:
-        skip: Number of records to skip
-        limit: Maximum number of records to return
-        is_active: Filter by active status
-        current_user: The current admin user
+        role_type: The role type (learner, employer, issuer, etc.)
         db: Database connection
         
     Returns:
-        Dict containing list of roles and pagination info
+        Dict containing role information including role_id
+        
+    Raises:
+        HTTPException: If role not found
     """
     try:
-        rbac_service = RBACService(db)
-        roles = await rbac_service.get_roles(skip, limit, is_active)
+        # Find role by role_type
+        role = await db.roles.find_one({
+            "role_type": role_type,
+            "is_active": True
+        })
+        
+        if not role:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Role with type '{role_type}' not found"
+            )
         
         return {
-            "roles": roles,
-            "skip": skip,
-            "limit": limit,
-            "total": len(roles)
+            "id": str(role["_id"]),
+            "name": role.get("name"),
+            "description": role.get("description"),
+            "role_type": role.get("role_type"),
+            "permissions": role.get("permissions", []),
+            "is_active": role.get("is_active", True)
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"List roles endpoint error: {e}")
+        logger.error(f"Get role by type endpoint error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve roles"
+            detail="Failed to retrieve role"
         )
 
 
@@ -341,19 +405,18 @@ async def delete_role(
     response_model=UserRoleResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Assign role to user",
-    description="Assign a role to a specific user"
+    description="Assign a role to a specific user (public endpoint for registration)"
 )
 async def assign_role_to_user(
     assignment_data: UserRoleAssignment,
-    current_user: UserInDB = Depends(require_user_manager),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
-    Assign a role to a user.
+    Assign a role to a user. This is now a public endpoint that can be called during registration.
+    The assigned_by field will be set to 'system' for self-registration.
     
     Args:
         assignment_data: Role assignment data
-        current_user: The current user manager
         db: Database connection
         
     Returns:
@@ -364,10 +427,15 @@ async def assign_role_to_user(
     """
     try:
         rbac_service = RBACService(db)
+        
+        # Use 'system' as the assigned_by for self-registration
+        # If assigned_by is provided in the data, use it, otherwise default to 'system'
+        assigned_by = getattr(assignment_data, 'assigned_by', 'system') or 'system'
+        
         result = await rbac_service.assign_role_to_user(
             assignment_data.user_id,
             assignment_data.role_id,
-            str(current_user.id),
+            assigned_by,
             assignment_data.expires_at
         )
         
@@ -428,25 +496,46 @@ async def remove_role_from_user(
 @router.get(
     "/user/{user_id}",
     summary="Get user roles",
-    description="Get all roles assigned to a specific user"
+    description="Get all roles assigned to a specific user (authenticated users can access their own roles)"
 )
 async def get_user_roles(
     user_id: str,
-    current_user: UserInDB = Depends(require_user_manager),
+    current_user: UserInDB = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
     Get all roles assigned to a user.
+    Users can access their own roles, or admins can access any user's roles.
     
     Args:
         user_id: User identifier
-        current_user: The current user manager
+        current_user: The current authenticated user
         db: Database connection
         
     Returns:
         Dict containing user roles
+        
+    Raises:
+        HTTPException: If user tries to access another user's roles without permission
     """
     try:
+        # Check if user is accessing their own roles or has admin permission
+        is_own_roles = str(current_user.id) == user_id
+        
+        if not is_own_roles and not current_user.is_superuser:
+            # Check if user has user:manage permission
+            rbac_service = RBACService(db)
+            has_permission = await rbac_service.check_permission(
+                str(current_user.id),
+                PermissionType.USER_MANAGE
+            )
+            
+            if not has_permission:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You don't have permission to view other users' roles"
+                )
+        
         rbac_service = RBACService(db)
         roles = await rbac_service.get_user_roles(user_id)
         
@@ -455,6 +544,8 @@ async def get_user_roles(
             "roles": roles
         }
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Get user roles endpoint error: {e}")
         raise HTTPException(
