@@ -43,6 +43,8 @@ class CredentialStatus(str, Enum):
     VERIFIED = "verified"
     REVOKED = "revoked"
     EXPIRED = "expired"
+    BLOCKCHAIN_PENDING = "blockchain_pending"
+    BLOCKCHAIN_CONFIRMED = "blockchain_confirmed"
 
 
 class ShareType(str, Enum):
@@ -130,6 +132,57 @@ class CredentialSummary(BaseModel):
     )
 
 
+class BlockchainData(BaseModel):
+    """Blockchain transaction data for credentials."""
+    
+    credential_hash: str = Field(..., description="SHA-256 hash of the credential")
+    transaction_hash: Optional[str] = Field(None, description="Blockchain transaction hash")
+    block_number: Optional[int] = Field(None, description="Block number where transaction was mined")
+    network: str = Field(default="amoy", description="Blockchain network")
+    gas_used: Optional[int] = Field(None, description="Gas used for transaction")
+    status: str = Field(default="pending", description="Transaction status")
+    confirmed_at: Optional[datetime] = Field(None, description="When transaction was confirmed")
+    is_revoked: bool = Field(default=False, description="Whether credential is revoked on blockchain")
+    revoked_at: Optional[datetime] = Field(None, description="When credential was revoked")
+    revoked_by: Optional[str] = Field(None, description="Who revoked the credential (DID)")
+    revocation_reason: Optional[str] = Field(None, description="Reason for revocation")
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "credential_hash": "0x1234567890abcdef...",
+                "transaction_hash": "0xabcdef1234567890...",
+                "block_number": 12345678,
+                "network": "amoy",
+                "gas_used": 250000,
+                "status": "confirmed",
+                "is_revoked": False
+            }
+        }
+    )
+
+
+class QRCodeData(BaseModel):
+    """QR code data for credential verification."""
+    
+    qr_code_image: str = Field(..., description="Base64 encoded QR code image")
+    verification_url: str = Field(..., description="URL for credential verification")
+    qr_code_json: str = Field(..., description="JSON data encoded in QR code")
+    is_revoked: bool = Field(default=False, description="Whether credential is revoked")
+    revocation_status: Optional[Dict[str, Any]] = Field(None, description="Revocation status information")
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "qr_code_image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
+                "verification_url": "https://your-domain.com/api/v1/verify/qr?data=...",
+                "qr_code_json": '{"credential_hash":"0x123...","transaction_hash":"0xabc..."}',
+                "is_revoked": False
+            }
+        }
+    )
+
+
 class CredentialDetail(BaseModel):
     """Detailed model for credential information."""
     
@@ -145,6 +198,8 @@ class CredentialDetail(BaseModel):
     expires_date: Optional[datetime] = None
     tags: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    blockchain_data: Optional[BlockchainData] = Field(None, description="Blockchain transaction data")
+    qr_code_data: Optional[QRCodeData] = Field(None, description="QR code for verification")
     
     model_config = ConfigDict(
         populate_by_name=True,

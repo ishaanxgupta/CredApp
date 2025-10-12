@@ -20,6 +20,10 @@ from .api.v1.roles import router as roles_router
 from .api.v1.learner import router as learner_router
 from .api.v1.employer import router as employer_router
 from .api.v1.recommendations import router as recommendations_router
+from .api.v1.verification import router as verification_router
+from .api.v1.qr_verification import router as qr_verification_router
+from .api.v1.blockchain_credentials import router as blockchain_credentials_router
+from .api.v1.did_management import router as did_management_router
 from .utils.logger import get_logger
 
 # Initialize logger
@@ -82,6 +86,10 @@ app.include_router(roles_router)
 app.include_router(learner_router)
 app.include_router(employer_router)
 app.include_router(recommendations_router)
+app.include_router(verification_router)
+app.include_router(qr_verification_router)
+app.include_router(blockchain_credentials_router)
+app.include_router(did_management_router)
 
 
 # Global exception handlers
