@@ -482,3 +482,164 @@ async def validate_api_key(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to validate API key"
         )
+
+
+# Dashboard access dependencies
+async def require_learner_access(
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = DatabaseDep
+) -> UserInDB:
+    """
+    Verify that the current user has learner role access.
+    
+    Args:
+        current_user: The current authenticated user
+        db: Database connection
+        
+    Returns:
+        UserInDB: The user if they have learner access
+        
+    Raises:
+        HTTPException: If user doesn't have learner role
+    """
+    from ..services.rbac_service import RBACService
+    
+    rbac_service = RBACService(db)
+    
+    # Superuser has all access
+    if current_user.is_superuser:
+        return current_user
+    
+    # Get user roles
+    user_roles = await rbac_service.get_user_roles(str(current_user.id))
+    
+    # Check if user has learner role
+    has_learner_role = any(role["role_type"] == RoleType.LEARNER for role in user_roles)
+    
+    if not has_learner_role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access restricted. Learner role required to access this dashboard."
+        )
+    
+    return current_user
+
+
+async def require_employer_access(
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = DatabaseDep
+) -> UserInDB:
+    """
+    Verify that the current user has employer role access.
+    
+    Args:
+        current_user: The current authenticated user
+        db: Database connection
+        
+    Returns:
+        UserInDB: The user if they have employer access
+        
+    Raises:
+        HTTPException: If user doesn't have employer role
+    """
+    from ..services.rbac_service import RBACService
+    
+    rbac_service = RBACService(db)
+    
+    # Superuser has all access
+    if current_user.is_superuser:
+        return current_user
+    
+    # Get user roles
+    user_roles = await rbac_service.get_user_roles(str(current_user.id))
+    
+    # Check if user has employer role
+    has_employer_role = any(role["role_type"] == RoleType.EMPLOYER for role in user_roles)
+    
+    if not has_employer_role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access restricted. Employer role required to access this dashboard."
+        )
+    
+    return current_user
+
+
+async def require_issuer_access(
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = DatabaseDep
+) -> UserInDB:
+    """
+    Verify that the current user has issuer role access.
+    
+    Args:
+        current_user: The current authenticated user
+        db: Database connection
+        
+    Returns:
+        UserInDB: The user if they have issuer access
+        
+    Raises:
+        HTTPException: If user doesn't have issuer role
+    """
+    from ..services.rbac_service import RBACService
+    
+    rbac_service = RBACService(db)
+    
+    # Superuser has all access
+    if current_user.is_superuser:
+        return current_user
+    
+    # Get user roles
+    user_roles = await rbac_service.get_user_roles(str(current_user.id))
+    
+    # Check if user has issuer role
+    has_issuer_role = any(role["role_type"] == RoleType.ISSUER for role in user_roles)
+    
+    if not has_issuer_role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access restricted. Issuer/Institution role required to access this dashboard."
+        )
+    
+    return current_user
+
+
+async def require_admin_access(
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = DatabaseDep
+) -> UserInDB:
+    """
+    Verify that the current user has admin role access.
+    
+    Args:
+        current_user: The current authenticated user
+        db: Database connection
+        
+    Returns:
+        UserInDB: The user if they have admin access
+        
+    Raises:
+        HTTPException: If user doesn't have admin role
+    """
+    from ..services.rbac_service import RBACService
+    
+    rbac_service = RBACService(db)
+    
+    # Superuser has all access
+    if current_user.is_superuser:
+        return current_user
+    
+    # Get user roles
+    user_roles = await rbac_service.get_user_roles(str(current_user.id))
+    
+    # Check if user has admin role
+    has_admin_role = any(role["role_type"] == RoleType.ADMIN for role in user_roles)
+    
+    if not has_admin_role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access restricted. Admin role required to access this dashboard."
+        )
+    
+    return current_user

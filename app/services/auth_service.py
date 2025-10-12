@@ -86,6 +86,24 @@ class AuthService:
                     kyc_data.get('mobileVerification')
                 )
             
+            # Handle role assignment
+            role_id = None
+            permissions = []
+            
+            if user_data.role_type:
+                # Find the role by role_type
+                role = await self.db.roles.find_one({
+                    "role_type": user_data.role_type,
+                    "is_active": True
+                })
+                
+                if role:
+                    role_id = str(role["_id"])
+                    permissions = role.get("permissions", [])
+                    logger.info(f"Assigning role {user_data.role_type} to new user")
+                else:
+                    logger.warning(f"Role type {user_data.role_type} not found, user will be created without role")
+            
             # Create user document
             user_doc = {
                 "email": user_data.email.lower(),
@@ -99,8 +117,8 @@ class AuthService:
                 "is_active": True,
                 "is_verified": False,
                 "is_superuser": False,
-                "roles": [],  # Default to no roles
-                "permissions": [],  # Default to no permissions
+                "roles": [role_id] if role_id else [],  # Assign selected role
+                "permissions": permissions,  # Assign role permissions
                 "kyc_verification": kyc_data,
                 "kyc_verified": kyc_verified,
                 "created_at": datetime.utcnow(),

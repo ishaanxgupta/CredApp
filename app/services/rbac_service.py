@@ -472,6 +472,7 @@ class RBACService:
     async def get_user_roles(self, user_id: str) -> List[Dict[str, Any]]:
         """
         Get all roles assigned to a user.
+        Supports both user_role_assignments collection and direct user.roles array.
         
         Args:
             user_id: User identifier
@@ -480,12 +481,14 @@ class RBACService:
             List of user roles
         """
         try:
+            roles = []
+            
+            # First, check user_role_assignments collection (new approach)
             assignments = await self.db.user_role_assignments.find({
                 "user_id": user_id,
                 "is_active": True
             }).to_list(None)
             
-            roles = []
             for assignment in assignments:
                 role = await self.get_role(assignment["role_id"])
                 if role:
@@ -498,6 +501,23 @@ class RBACService:
                         "expires_at": assignment.get("expires_at"),
                         "is_active": assignment["is_active"]
                     })
+            
+            # If no assignments found, check user's roles array (backward compatibility)
+            if not roles:
+                user = await self.db.users.find_one({"_id": ObjectId(user_id)})
+                if user and user.get("roles"):
+                    for role_id in user.get("roles", []):
+                        role = await self.get_role(role_id)
+                        if role:
+                            roles.append({
+                                "role_id": role["id"],
+                                "role_name": role["name"],
+                                "role_type": role["role_type"],
+                                "permissions": role["permissions"],
+                                "assigned_at": user.get("created_at"),
+                                "expires_at": None,
+                                "is_active": True
+                            })
             
             return roles
             
