@@ -30,6 +30,52 @@ class AuthService:
         self.max_login_attempts = 5
         self.lockout_duration = timedelta(minutes=30)
     
+    async def _get_user_roles_and_permissions(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get user roles and permissions from database.
+        
+        Args:
+            user_id: The user ID
+            
+        Returns:
+            Dict containing roles and permissions
+        """
+        try:
+            user = await self.db.users.find_one({"_id": ObjectId(user_id)})
+            if not user:
+                return {"roles": [], "permissions": []}
+            
+            # Get role IDs from user
+            role_ids = user.get("roles", [])
+            if not role_ids:
+                return {"roles": [], "permissions": []}
+            
+            # Get role details
+            roles = []
+            all_permissions = set()
+            
+            for role_id in role_ids:
+                role = await self.db.roles.find_one({"_id": ObjectId(role_id)})
+                if role:
+                    roles.append({
+                        "id": str(role["_id"]),
+                        "name": role.get("name", ""),
+                        "role_type": role.get("role_type", ""),
+                        "permissions": role.get("permissions", [])
+                    })
+                    all_permissions.update(role.get("permissions", []))
+            
+            return {
+                "roles": [role["name"] for role in roles],
+                "role_ids": role_ids,
+                "permissions": list(all_permissions),
+                "is_superuser": user.get("is_superuser", False)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting user roles and permissions: {e}")
+            return {"roles": [], "permissions": []}
+
     async def register_user(self, user_data: UserCreate) -> Dict[str, Any]:
         """
         Register a new user.
@@ -114,9 +160,18 @@ class AuthService:
             result = await self.db.users.insert_one(user_doc)
             user_id = str(result.inserted_id)
             
+            # Get user roles and permissions
+            user_roles_perms = await self._get_user_roles_and_permissions(user_id)
+            
             # Create tokens
             access_token = create_access_token(
-                data={"sub": user_id, "email": user_data.email}
+                data={
+                    "sub": user_id, 
+                    "email": user_data.email,
+                    "is_superuser": user_roles_perms.get("is_superuser", False),
+                    "roles": user_roles_perms.get("roles", []),
+                    "permissions": user_roles_perms.get("permissions", [])
+                }
             )
             refresh_token = create_refresh_token(
                 data={"sub": user_id, "email": user_data.email}
@@ -207,13 +262,18 @@ class AuthService:
             # Reset login attempts on successful login
             await self._reset_login_attempts(user_obj.id)
             
+            # Get user roles and permissions
+            user_roles_perms = await self._get_user_roles_and_permissions(str(user_obj.id))
+            
             # Create tokens
             token_expiry = timedelta(days=30) if login_data.remember_me else timedelta(hours=1)
             access_token = create_access_token(
                 data={
                     "sub": str(user_obj.id),
                     "email": user_obj.email,
-                    "is_superuser": user_obj.is_superuser
+                    "is_superuser": user_roles_perms.get("is_superuser", user_obj.is_superuser),
+                    "roles": user_roles_perms.get("roles", []),
+                    "permissions": user_roles_perms.get("permissions", [])
                 },
                 expires_delta=token_expiry
             )
@@ -301,12 +361,17 @@ class AuthService:
                     detail="User not found or inactive"
                 )
             
+            # Get user roles and permissions
+            user_roles_perms = await self._get_user_roles_and_permissions(token_data.user_id)
+            
             # Create new tokens
             new_access_token = create_access_token(
                 data={
                     "sub": token_data.user_id,
                     "email": token_data.email,
-                    "is_superuser": user.get("is_superuser", False)
+                    "is_superuser": user_roles_perms.get("is_superuser", user.get("is_superuser", False)),
+                    "roles": user_roles_perms.get("roles", []),
+                    "permissions": user_roles_perms.get("permissions", [])
                 }
             )
             

@@ -13,6 +13,8 @@ class TokenData(BaseModel):
     user_id: Optional[str] = None
     email: Optional[str] = None
     is_superuser: bool = False
+    roles: list = []
+    permissions: list = []
 
 
 class Token(BaseModel):

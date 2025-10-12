@@ -203,6 +203,8 @@ def verify_token(token: str, token_type: str = "access") -> TokenData:
         user_id: str = payload.get("sub")
         email: str = payload.get("email")
         is_superuser: bool = payload.get("is_superuser", False)
+        roles: list = payload.get("roles", [])
+        permissions: list = payload.get("permissions", [])
         
         if user_id is None or email is None:
             raise credentials_exception
@@ -210,7 +212,9 @@ def verify_token(token: str, token_type: str = "access") -> TokenData:
         token_data = TokenData(
             user_id=user_id,
             email=email,
-            is_superuser=is_superuser
+            is_superuser=is_superuser,
+            roles=roles,
+            permissions=permissions
         )
         
         return token_data
