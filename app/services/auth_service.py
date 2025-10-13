@@ -65,6 +65,10 @@ class AuthService:
                     })
                     all_permissions.update(role.get("permissions", []))
             
+            # Also include user's direct permissions
+            user_permissions = user.get("permissions", [])
+            all_permissions.update(user_permissions)
+            
             return {
                 "roles": [role["name"] for role in roles],
                 "role_ids": role_ids,

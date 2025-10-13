@@ -805,3 +805,103 @@ async def revoke_api_key(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to revoke API key"
         )
+
+
+@router.get(
+    "/users/{user_id}/is-learner",
+    summary="Check if user is a learner",
+    description="Check if a given user_id has learner role or is a learner"
+)
+async def check_user_is_learner(
+    user_id: str,
+    issuer_id: str = Depends(get_issuer_id),
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """
+    Check if a given user_id is a learner.
+    
+    Args:
+        user_id: The user identifier to check
+        issuer_id: The issuer identifier (for authorization)
+        db: Database connection
+        
+    Returns:
+        Dict containing learner status information
+        
+    Raises:
+        HTTPException: If user not found or access denied
+    """
+    try:
+        # Validate user_id format
+        if not ObjectId.is_valid(user_id):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid user ID format"
+            )
+        
+        # Find the user
+        user = await db.users.find_one({"_id": ObjectId(user_id)})
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Get user roles
+        user_roles = user.get("roles", [])
+        
+        # Find Learner role in database (try different variations)
+        learner_role = await db.roles.find_one({"name": "Learner"})
+        if not learner_role:
+            learner_role = await db.roles.find_one({"name": "learner"})
+        if not learner_role:
+            learner_role = await db.roles.find_one({"name": "LEARNER"})
+        
+        is_learner = False
+        learner_role_id = None
+        role_details = None
+        
+        if learner_role:
+            learner_role_id = str(learner_role["_id"])
+            # Check if user has LEARNER role
+            is_learner = learner_role_id in [str(role_id) for role_id in user_roles]
+            
+            if is_learner:
+                role_details = {
+                    "role_id": learner_role_id,
+                    "role_name": learner_role.get("name"),
+                    "role_type": learner_role.get("role_type"),
+                    "description": learner_role.get("description"),
+                    "permissions": learner_role.get("permissions", [])
+                }
+        
+        # Get user basic info (without sensitive data)
+        user_info = {
+            "user_id": str(user["_id"]),
+            "email": user.get("email"),
+            "full_name": user.get("full_name"),
+            "is_active": user.get("is_active", True),
+            "is_verified": user.get("is_verified", False),
+            "created_at": user.get("created_at")
+        }
+        
+        logger.info(f"Learner check for user {user_id}: is_learner={is_learner}")
+        
+        return {
+            "user_info": user_info,
+            "is_learner": is_learner,
+            "learner_role_id": learner_role_id,
+            "learner_role_details": role_details,
+            "all_user_roles": user_roles,
+            "checked_at": datetime.utcnow().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Check learner status endpoint error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check learner status"
+        )

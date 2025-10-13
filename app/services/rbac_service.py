@@ -551,6 +551,10 @@ class RBACService:
             for role in roles:
                 permissions.update(role["permissions"])
             
+            # Also include user's direct permissions
+            user_permissions = user.get("permissions", [])
+            permissions.update(user_permissions)
+            
             return list(permissions)
             
         except Exception as e:

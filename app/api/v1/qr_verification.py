@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any
 from datetime import datetime
 
 from ...services.blockchain_service import blockchain_service
-from ...services.qr_service import qr_service
+from ...services.qr_service import QRCodeService
 from ...db.mongo import DatabaseDep
 from ...utils.logger import get_logger
 

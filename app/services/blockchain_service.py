@@ -192,17 +192,27 @@ class BlockchainService:
         Returns:
             Hex string of the SHA-256 hash
         """
+        # Extract data from database structure
+        credential_id = str(credential_data.get("_id", ""))
+        vc_payload = credential_data.get("vc_payload", {})
+        credential_subject = vc_payload.get("credentialSubject", {})
+        issuer_info = vc_payload.get("issuer", {})
+        
         # Create deterministic string representation
         hash_data = {
-            "credential_id": str(credential_data.get("credential_id", "")),
-            "learner_id": str(credential_data.get("learner_id", "")),
-            "issuer_id": str(credential_data.get("issuer_id", "")),
+            "credential_id": credential_id,
+            "learner_name": credential_subject.get("name", ""),
+            "learner_address": credential_subject.get("learner_address", ""),
+            "issuer_name": issuer_info.get("name", ""),
+            "issuer_did": issuer_info.get("did", ""),
             "credential_type": credential_data.get("credential_type", ""),
-            "title": credential_data.get("title", ""),
-            "description": credential_data.get("description", ""),
-            "issued_at": credential_data.get("issued_at", ""),
-            "credential_data": credential_data.get("credential_data", {}),
-            "metadata": credential_data.get("metadata", {})
+            "course": credential_subject.get("course", ""),
+            "grade": credential_subject.get("grade", ""),
+            "completion_date": credential_subject.get("completion_date", ""),
+            "issued_at": vc_payload.get("issuanceDate", ""),
+            "credential_schema": vc_payload.get("credentialSchema", {}),
+            "context": vc_payload.get("@context", []),
+            "type": vc_payload.get("type", [])
         }
         
         # Sort keys for deterministic JSON
@@ -290,7 +300,7 @@ class BlockchainService:
             
             # Sign and send transaction
             signed_txn = self.w3.eth.account.sign_transaction(transaction, self.account.key)
-            tx_hash = self.w3.eth.send_raw_transaction(signed_txn.rawTransaction)
+            tx_hash = self.w3.eth.send_raw_transaction(signed_txn.raw_transaction)
             
             logger.info(f"Credential issued on blockchain with tx hash: {tx_hash.hex()}")
             

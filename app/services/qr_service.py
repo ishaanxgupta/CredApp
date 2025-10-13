@@ -350,5 +350,4 @@ class QRCodeService:
             }
 
 
-# Global instance
-qr_service = QRCodeService()
+# Global instance - removed to prevent import issues
