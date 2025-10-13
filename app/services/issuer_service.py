@@ -18,6 +18,9 @@ from ..models.issuer import (
     PublicKeyInDB, WebhookInDB, CredentialStatus, CredentialType, KeyType,
     WebhookEvent
 )
+from ..models.learner import BlockchainData, QRCodeData
+from ..services.blockchain_service import blockchain_service
+from ..services.credential_issuance_service import CredentialIssuanceService
 from ..utils.logger import get_logger
 
 logger = get_logger("issuer_service")
@@ -98,21 +101,155 @@ class IssuerService:
             result = await self.db.credentials.insert_one(credential_doc)
             credential_id = str(result.inserted_id)
             
+            # Initialize blockchain data and QR code data
+            blockchain_data = None
+            qr_code_data = None
+            blockchain_status = "not_attempted"
+            blockchain_error = None
+            
+            # Try to automatically issue on blockchain
+            try:
+                logger.info(f"Attempting automatic blockchain issuance for credential: {credential_id}")
+                
+                # Get learner info from credential payload
+                learner_info = self._extract_learner_info(credential_data.vc_payload)
+                
+                if learner_info and learner_info.get("learner_address"):
+                    # Issue credential on blockchain
+                    blockchain_result = blockchain_service.issue_credential_on_blockchain(
+                        credential_data=credential_data.vc_payload,
+                        learner_address=learner_info["learner_address"]
+                    )
+                    
+                    if blockchain_result.get("success"):
+                        blockchain_data = BlockchainData(
+                            transaction_hash=blockchain_result.get("transaction_hash"),
+                            block_number=blockchain_result.get("block_number"),
+                            network=blockchain_result.get("network", "amoy"),
+                            status="confirmed" if blockchain_result.get("confirmed") else "pending",
+                            is_revoked=False,
+                            revoked_at=None,
+                            revoked_by=None,
+                            revocation_reason=None
+                        )
+                        
+                        # Generate QR code data separately
+                        try:
+                            credential_issuance_service = CredentialIssuanceService(self.db)
+                            qr_result = await credential_issuance_service._generate_credential_qr_code(
+                                credential_data=credential_data.vc_payload,
+                                blockchain_result=blockchain_result
+                            )
+                            qr_code_data = qr_result.get("qr_code_data")
+                        except Exception as qr_error:
+                            logger.warning(f"QR code generation failed for credential {credential_id}: {qr_error}")
+                            qr_code_data = None
+                        
+                        blockchain_status = "issued"
+                        
+                        logger.info(f"Credential {credential_id} successfully issued on blockchain")
+                    else:
+                        blockchain_status = "failed"
+                        blockchain_error = blockchain_result.get("error", "Unknown blockchain error")
+                        logger.warning(f"Blockchain issuance failed for credential {credential_id}: {blockchain_error}")
+                else:
+                    blockchain_status = "skipped"
+                    blockchain_error = "No learner address found in credential payload"
+                    logger.warning(f"No learner address found for credential {credential_id}")
+                    
+            except Exception as e:
+                blockchain_status = "error"
+                blockchain_error = str(e)
+                logger.error(f"Blockchain issuance error for credential {credential_id}: {e}")
+            
+            # Always generate QR code (even if blockchain fails)
+            try:
+                logger.info(f"Generating QR code for credential {credential_id} (blockchain status: {blockchain_status})")
+                
+                # Import QR service directly
+                from ..services.qr_service import QRCodeService
+                qr_service = QRCodeService(base_url="http://localhost:8000")
+                
+                # Create blockchain data for QR generation
+                qr_blockchain_data = {
+                    "credential_hash": blockchain_data.get("credential_hash") if blockchain_data else f"0x{'1' * 64}",
+                    "transaction_hash": blockchain_data.get("transaction_hash") if blockchain_data else f"0x{'0' * 64}",
+                    "block_number": blockchain_data.get("block_number") if blockchain_data else None,
+                    "network": "amoy",
+                    "status": blockchain_data.get("status") if blockchain_data else "pending",
+                    "is_revoked": False
+                }
+                
+                # Prepare credential data for QR
+                qr_credential_data = {
+                    "_id": credential_id,
+                    "title": credential_data.vc_payload.get("credentialSubject", {}).get("course", "Certificate"),
+                    "credential_type": credential_data.credential_type,
+                    "issuer_name": credential_data.vc_payload.get("issuer", {}).get("name", "Issuer"),
+                    "learner_name": credential_data.vc_payload.get("credentialSubject", {}).get("name", "Learner"),
+                    "issued_at": credential_data.vc_payload.get("issuanceDate", datetime.utcnow().isoformat())
+                }
+                
+                # Generate QR code
+                logger.info(f"Calling QR service with data: {qr_credential_data}")
+                qr_result = qr_service.generate_credential_certificate_qr(
+                    credential_data=qr_credential_data,
+                    blockchain_data=qr_blockchain_data,
+                    certificate_template="standard"
+                )
+                logger.info(f"QR service returned: {qr_result is not None}")
+                
+                if qr_result:
+                    qr_code_data = QRCodeData(
+                        qr_code_image=qr_result.get("qr_code_image"),
+                        verification_url=qr_result.get("verification_url"),
+                        qr_code_json=qr_result.get("qr_code_json"),
+                        is_revoked=False,
+                        revocation_status=None
+                    )
+                    logger.info(f"QR code generated successfully for credential {credential_id}")
+                else:
+                    logger.warning(f"QR code generation returned None for credential {credential_id}")
+                    qr_code_data = None
+                    
+            except Exception as qr_error:
+                logger.warning(f"QR code generation failed for credential {credential_id}: {qr_error}")
+                qr_code_data = None
+            
+            # Update credential with blockchain data
+            update_data = {
+                "updated_at": datetime.utcnow(),
+                "blockchain_data": blockchain_data.dict() if blockchain_data else None,
+                "qr_code_data": qr_code_data.dict() if qr_code_data else None,
+                "blockchain_status": blockchain_status,
+                "blockchain_error": blockchain_error
+            }
+            
+            await self.db.credentials.update_one(
+                {"_id": ObjectId(credential_id)},
+                {"$set": update_data}
+            )
+            
             # Emit event for background processing
             await self._emit_credential_event("credential.ingested", {
                 "credential_id": credential_id,
                 "issuer_id": issuer_id,
-                "credential_type": credential_data.credential_type
+                "credential_type": credential_data.credential_type,
+                "blockchain_status": blockchain_status
             })
             
-            logger.info(f"Credential submitted successfully: {credential_id}")
+            logger.info(f"Credential submitted successfully: {credential_id} (blockchain: {blockchain_status})")
             
             return {
                 "credential_id": credential_id,
                 "status": CredentialStatus.PENDING,
                 "created_at": credential_doc["created_at"],
-                "updated_at": credential_doc["updated_at"],
-                "errors": None
+                "updated_at": update_data["updated_at"],
+                "errors": None,
+                "blockchain_data": blockchain_data.dict() if blockchain_data else None,
+                "qr_code_data": qr_code_data.dict() if qr_code_data else None,
+                "blockchain_status": blockchain_status,
+                "blockchain_error": blockchain_error
             }
             
         except HTTPException:
@@ -720,3 +857,40 @@ class IssuerService:
                     "$set": {"updated_at": datetime.utcnow()}
                 }
             )
+    
+    def _extract_learner_info(self, vc_payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Extract learner information from credential payload.
+        
+        Args:
+            vc_payload: The verifiable credential payload
+            
+        Returns:
+            Dict containing learner information or None if not found
+        """
+        try:
+            # Try to extract from standard VC structure
+            credential_subject = vc_payload.get("credentialSubject", {})
+            
+            # Look for learner address in various possible fields
+            learner_address = (
+                credential_subject.get("learner_address") or
+                credential_subject.get("learnerAddress") or
+                credential_subject.get("learner") or
+                credential_subject.get("id") or
+                vc_payload.get("learner_address") or
+                vc_payload.get("learnerAddress")
+            )
+            
+            if learner_address:
+                return {
+                    "learner_address": learner_address,
+                    "learner_name": credential_subject.get("name") or credential_subject.get("learner_name"),
+                    "learner_email": credential_subject.get("email") or credential_subject.get("learner_email")
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Error extracting learner info from credential payload: {e}")
+            return None

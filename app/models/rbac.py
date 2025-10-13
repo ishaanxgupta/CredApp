@@ -256,6 +256,7 @@ DEFAULT_ROLES = {
         PermissionType.CREDENTIAL_READ,
         PermissionType.CREDENTIAL_UPDATE,
         PermissionType.CREDENTIAL_REVOKE,
+        PermissionType.CREDENTIAL_VERIFY,  
         PermissionType.ISSUER_MANAGE,
         PermissionType.ISSUER_VIEW,
         PermissionType.ISSUER_BULK_UPLOAD,

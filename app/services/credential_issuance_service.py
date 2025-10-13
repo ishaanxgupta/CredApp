@@ -11,7 +11,7 @@ from bson import ObjectId
 from fastapi import HTTPException, status
 
 from ..services.blockchain_service import blockchain_service
-from ..services.qr_service import qr_service
+from ..services.qr_service import QRCodeService
 from ..models.learner import BlockchainData, QRCodeData, CredentialStatus
 from ..utils.logger import get_logger
 
@@ -79,7 +79,10 @@ class CredentialIssuanceService:
                     {
                         "$set": {
                             "status": CredentialStatus.BLOCKCHAIN_PENDING,
-                            "blockchain_data.credential_hash": credential_hash,
+                            "blockchain_data": {
+                                "credential_hash": credential_hash,
+                                "status": "pending"
+                            },
                             "updated_at": datetime.utcnow()
                         }
                     }
@@ -212,6 +215,28 @@ class CredentialIssuanceService:
     ) -> Dict[str, Any]:
         """Generate QR code for credential verification"""
         try:
+            # Get full credential data from database
+            credential_id = str(credential_data.get("_id", ""))
+            full_credential = await self.db.credentials.find_one({"_id": ObjectId(credential_id)})
+            
+            if not full_credential:
+                raise HTTPException(status_code=404, detail="Credential not found")
+            
+            # Extract VC payload data
+            vc_payload = full_credential.get("vc_payload", {})
+            credential_subject = vc_payload.get("credentialSubject", {})
+            issuer_info = vc_payload.get("issuer", {})
+            
+            # Prepare credential data for QR generation
+            qr_credential_data = {
+                "_id": credential_id,
+                "title": credential_subject.get("course", "Certificate"),
+                "credential_type": full_credential.get("credential_type", "digital-certificate"),
+                "issuer_name": issuer_info.get("name", "Issuer"),
+                "learner_name": credential_subject.get("name", "Learner"),
+                "issued_at": vc_payload.get("issuanceDate", datetime.utcnow().isoformat())
+            }
+            
             # Prepare blockchain data for QR generation
             blockchain_qr_data = {
                 "credential_hash": blockchain_result.get("credential_hash"),
@@ -222,8 +247,9 @@ class CredentialIssuanceService:
             }
             
             # Generate QR code
+            qr_service = QRCodeService(base_url="http://localhost:8000")
             qr_result = qr_service.generate_credential_certificate_qr(
-                credential_data=credential_data,
+                credential_data=qr_credential_data,
                 blockchain_data=blockchain_qr_data,
                 certificate_template="standard"
             )
@@ -250,6 +276,7 @@ class CredentialIssuanceService:
         """
         try:
             # Parse QR code data
+            qr_service = QRCodeService(base_url="http://localhost:8000")
             parsed_data = qr_service.parse_qr_data(qr_data)
             if not parsed_data:
                 raise HTTPException(

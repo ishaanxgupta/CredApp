@@ -14,6 +14,7 @@ except ImportError:
     ObjectId = str
 
 from .user import PyObjectId
+from .learner import BlockchainData, QRCodeData
 
 
 class CredentialStatus(str, Enum):
@@ -176,6 +177,10 @@ class CredentialResponse(BaseModel):
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     errors: Optional[List[str]] = Field(None, description="Processing errors if any")
+    blockchain_data: Optional[BlockchainData] = Field(None, description="Blockchain transaction data")
+    qr_code_data: Optional[QRCodeData] = Field(None, description="QR code data for verification")
+    blockchain_status: Optional[str] = Field(None, description="Blockchain issuance status")
+    blockchain_error: Optional[str] = Field(None, description="Blockchain issuance error if any")
     
     model_config = ConfigDict(
         json_schema_extra={
@@ -184,7 +189,20 @@ class CredentialResponse(BaseModel):
                 "status": "accepted",
                 "created_at": "2024-01-15T10:30:00Z",
                 "updated_at": "2024-01-15T10:35:00Z",
-                "errors": None
+                "errors": None,
+                "blockchain_data": {
+                    "transaction_hash": "0x123...abc",
+                    "block_number": 12345678,
+                    "network": "amoy",
+                    "status": "confirmed",
+                    "is_revoked": False
+                },
+                "qr_code_data": {
+                    "qr_code_url": "http://localhost:8000/api/v1/qr/verify/cred_123",
+                    "verification_url": "http://localhost:8000/api/v1/verify/cred_123"
+                },
+                "blockchain_status": "issued",
+                "blockchain_error": None
             }
         }
     )

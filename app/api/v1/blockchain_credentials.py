@@ -10,7 +10,7 @@ from bson import ObjectId
 
 from ...services.credential_issuance_service import CredentialIssuanceService
 from ...services.blockchain_service import blockchain_service
-from ...services.qr_service import qr_service
+from ...services.qr_service import QRCodeService
 from ...core.dependencies import get_current_active_user, require_permission
 from ...models.user import UserInDB
 from ...models.rbac import PermissionType
@@ -184,6 +184,102 @@ async def get_credential_blockchain_info(
             detail="Failed to get credential blockchain information"
         )
 
+@router.get(
+    "/credentials/{credential_id}/complete",
+    summary="Get complete credential information",
+    description="Get complete credential information including blockchain data and QR code"
+)
+async def get_complete_credential_info(
+    credential_id: str,
+    current_user: UserInDB = Depends(require_permission(PermissionType.CREDENTIAL_VERIFY)),
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """
+    Get complete credential information including blockchain data and QR code.
+    """
+    try:
+        # Get credential from database
+        credential = await db.credentials.find_one({
+            "_id": ObjectId(credential_id)
+        })
+        
+        if not credential:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Credential not found"
+            )
+        
+        # Get blockchain info
+        issuance_service = CredentialIssuanceService(db)
+        blockchain_info = await issuance_service.get_credential_blockchain_info(credential_id)
+        
+        # Extract credential details
+        vc_payload = credential.get("vc_payload", {})
+        credential_subject = vc_payload.get("credentialSubject", {})
+        issuer_info = vc_payload.get("issuer", {})
+        
+        # Get learner ID from credential or lookup by email/name
+        learner_id = credential.get("learner_id", "")
+        
+        # If learner_id is not stored, try to find it by learner email or name
+        if not learner_id:
+            learner_name = credential_subject.get("name", "")
+            learner_email = credential_subject.get("email", "")
+            
+            # Try to find learner by email first, then by name
+            if learner_email:
+                learner = await db.users.find_one({"email": learner_email})
+                if learner:
+                    learner_id = str(learner["_id"])
+            elif learner_name:
+                # Try to find by name (less reliable but better than nothing)
+                learner = await db.users.find_one({"full_name": learner_name})
+                if learner:
+                    learner_id = str(learner["_id"])
+        
+        # Prepare complete response
+        result = {
+            "credential_id": credential_id,
+            "learner_id": learner_id,
+            "credential_details": {
+                "title": credential_subject.get("course", "Certificate"),
+                "credential_type": credential.get("credential_type", "digital-certificate"),
+                "issuer_name": issuer_info.get("name", "Issuer"),
+                "learner_name": credential_subject.get("name", "Learner"),
+                "learner_address": credential_subject.get("learner_address", ""),
+                "learner_id": learner_id,
+                "issued_at": vc_payload.get("issuanceDate", ""),
+                "grade": credential_subject.get("grade", ""),
+                "completion_date": credential_subject.get("completion_date", ""),
+                "status": credential.get("status", "pending")
+            },
+            "original_credential_data": {
+                "artifact_url": credential.get("artifact_url", ""),
+                "credential_type": credential.get("credential_type", ""),
+                "idempotency_key": credential.get("idempotency_key", ""),
+                "metadata": credential.get("metadata", {}),
+                "vc_payload": credential.get("vc_payload", {})
+            },
+            "blockchain_data": blockchain_info.get("database_blockchain_data", {}),
+            "blockchain_verification": blockchain_info.get("blockchain_verification", {}),
+            "qr_code_data": credential.get("qr_code_data", {}),
+            "qr_code_available": bool(credential.get("qr_code_data")),
+            "last_updated": credential.get("updated_at", ""),
+            "created_at": credential.get("created_at", "")
+        }
+        
+        logger.info(f"Complete credential info retrieved for credential {credential_id} by user {current_user.id}")
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting complete credential info: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get complete credential information"
+        )
+
 
 @router.put(
     "/credentials/{credential_id}/update-status",
@@ -254,6 +350,7 @@ async def generate_credential_qr_code(
             )
         
         # Generate QR code
+        qr_service = QRCodeService(base_url="http://localhost:8000")
         qr_result = qr_service.generate_credential_certificate_qr(
             credential_data=credential,
             blockchain_data=blockchain_data,

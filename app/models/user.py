@@ -72,6 +72,7 @@ class UserCreate(UserBase):
     
     password: str = Field(..., min_length=8, max_length=72, description="User password")
     confirm_password: str = Field(..., description="Password confirmation")
+    role_type: Optional[str] = Field(None, description="Role type for the user (learner, issuer, employer)")
     kyc_verification: Optional[dict] = Field(None, description="KYC verification data")
     
     model_config = ConfigDict(
@@ -81,6 +82,7 @@ class UserCreate(UserBase):
                 "full_name": "John Doe",
                 "password": "SecurePassword123!",
                 "confirm_password": "SecurePassword123!",
+                "role_type": "learner",
                 "phone_number": "+1234567890",
                 "date_of_birth": "1990-01-15",
                 "gender": "male",
