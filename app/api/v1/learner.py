@@ -593,3 +593,128 @@ async def download_portfolio(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate portfolio PDF"
         )
+
+
+@router.get(
+    "/share/{user_id}/{share_token}",
+    summary="Get shared profile",
+    description="Get public learner profile using share token (no authentication required)"
+)
+async def get_shared_profile(
+    user_id: str,
+    share_token: str,
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """
+    Get a learner's public profile using a valid share token.
+    This endpoint does not require authentication.
+    
+    Args:
+        user_id: The learner's user ID
+        share_token: The share token for validation
+        db: Database connection
+        
+    Returns:
+        Dict containing learner profile and credentials
+        
+    Raises:
+        HTTPException: If token is invalid or expired
+    """
+    try:
+        from bson import ObjectId
+        from datetime import datetime
+        
+        # Validate share token  
+        share_doc = await db.shares.find_one({
+            "user_id": ObjectId(user_id),
+            "share_token": share_token,
+            "is_active": True
+        })
+        
+        if not share_doc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Invalid or expired share link"
+            )
+        
+        # Check if token has expired
+        if share_doc.get("expires_at") and datetime.utcnow() > share_doc["expires_at"]:
+            raise HTTPException(
+                status_code=status.HTTP_410_GONE,
+                detail="Share link has expired"
+            )
+        
+        # Increment access count
+        await db.shares.update_one(
+            {"_id": share_doc["_id"]},
+            {"$inc": {"access_count": 1}}
+        )
+        
+        # Get comprehensive learner data
+        learner_service = LearnerService(db)
+        
+        # 1. Get learner profile from learners collection
+        learner_profile = await learner_service.get_learner_profile(user_id)
+        
+        # 2. Get user data from users collection (has more details)
+        user_doc = await db.users.find_one({"_id": ObjectId(user_id)})
+        
+        # 3. Get credentials
+        credentials = await learner_service.get_learner_credentials(user_id)
+        
+        if not user_doc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        # Combine data from both collections
+        combined_profile = {
+            # From users collection
+            "full_name": user_doc.get("full_name", "N/A"),
+            "email": user_doc.get("email", "N/A"),
+            "phone_number": user_doc.get("phone_number"),
+            "date_of_birth": user_doc.get("date_of_birth"),
+            "gender": user_doc.get("gender"),
+            "profile_picture_url": user_doc.get("profile_picture_url"),
+            
+            # Address from users collection
+            "address": user_doc.get("address", {}),
+            
+            # Education and experience from users collection
+            "education": user_doc.get("education"),
+            "experience": user_doc.get("experience"),
+            "preferred_nsqf_level": user_doc.get("preferred_nsqf_level"),
+            
+            # Skills from users collection
+            "skills": user_doc.get("skills", []),
+            
+            # KYC verification status
+            "kyc_verified": user_doc.get("kyc_verified", False),
+            
+            # From learners collection (if exists)
+            "bio": learner_profile.get("bio") if learner_profile else None,
+            "location": learner_profile.get("location") if learner_profile else user_doc.get("address"),
+            "social_links": learner_profile.get("social_links", {}) if learner_profile else {},
+            "profile_completion": learner_profile.get("profile_completion", 0) if learner_profile else 0,
+        }
+        
+        logger.info(f"Shared profile accessed: {user_id} via token {share_token[:8]}...")
+        
+        return {
+            "profile": combined_profile,
+            "credentials": credentials,
+            "share_info": {
+                "access_count": share_doc.get("access_count", 0) + 1,
+                "expires_at": share_doc.get("expires_at").isoformat() if share_doc.get("expires_at") else None
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get shared profile error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve shared profile"
+        )

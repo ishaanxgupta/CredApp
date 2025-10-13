@@ -309,6 +309,8 @@ class LearnerService:
             
             response = {
                 "_id": str(result.inserted_id),
+                "user_id": user_id,
+                "share_token": share_token,
                 "share_url": share_url,
                 "qr_code_url": qr_code_url,
                 "expires_at": expires_at,
@@ -316,7 +318,7 @@ class LearnerService:
                 "created_at": share_doc["created_at"]
             }
             
-            logger.info(f"Share created: {share_token}")
+            logger.info(f"Share created: {share_token} for user: {user_id}")
             return response
             
         except Exception as e:
@@ -628,6 +630,13 @@ class LearnerService:
         Returns:
             PDF content as bytes
         """
+        # Get learner profile and credentials first (before try block)
+        profile = await self.get_learner_profile(user_id)
+        credentials = await self.get_learner_credentials(user_id)
+        
+        if not profile:
+            raise ValueError("Learner profile not found")
+        
         try:
             from reportlab.lib.pagesizes import letter, A4
             from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -635,13 +644,6 @@ class LearnerService:
             from reportlab.lib.units import inch
             from reportlab.lib import colors
             from io import BytesIO
-            
-            # Get learner profile and credentials
-            profile = await self.get_learner_profile(user_id)
-            credentials = await self.get_learner_credentials(user_id)
-            
-            if not profile:
-                raise ValueError("Learner profile not found")
             
             # Create PDF buffer
             buffer = BytesIO()
@@ -762,45 +764,298 @@ class LearnerService:
             logger.info(f"Portfolio PDF generated for user: {user_id}")
             return pdf_content
             
-        except ImportError:
+        except ImportError as e:
             # Fallback if reportlab is not installed
-            logger.warning("ReportLab not installed, generating simple PDF")
-            return self._generate_simple_pdf(profile, credentials)
+            logger.warning(f"ReportLab import error: {e}, generating simple PDF")
+            return await self._generate_simple_pdf(profile, credentials)
         except Exception as e:
             logger.error(f"Error generating portfolio PDF: {e}")
             raise
     
-    def _generate_simple_pdf(self, profile: Dict[str, Any], credentials: List[Dict[str, Any]]) -> bytes:
-        """Generate a simple text-based PDF fallback."""
+    async def _generate_simple_pdf(self, profile: Dict[str, Any], credentials: List[Dict[str, Any]]) -> bytes:
+        """Generate a comprehensive professional PDF portfolio using weasyprint."""
         try:
-            from fpdf import FPDF
+            from weasyprint import HTML
+            from datetime import datetime
             
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font('Arial', 'B', 16)
+            # Extract profile information
+            name = profile.get('full_name', 'N/A')
+            email = profile.get('email', 'N/A')
+            phone = profile.get('phone_number', 'N/A')
+            bio = profile.get('bio', '')
+            print(bio)
             
-            # Title
-            pdf.cell(0, 10, 'Professional Portfolio', 0, 1, 'C')
-            pdf.ln(10)
+            # Location
+            location = profile.get('location', {})
+            city = location.get('city', '') if isinstance(location, dict) else ''
+            state = location.get('state', '') if isinstance(location, dict) else ''
+            country = location.get('country', '') if isinstance(location, dict) else ''
+            location_str = ', '.join(filter(None, [city, state, country])) or 'N/A'
             
-            # Personal Info
-            pdf.set_font('Arial', 'B', 12)
-            pdf.cell(0, 10, 'Personal Information', 0, 1)
-            pdf.set_font('Arial', '', 10)
-            pdf.cell(0, 8, f"Name: {profile.get('full_name', 'N/A')}", 0, 1)
-            pdf.cell(0, 8, f"Email: {profile.get('email', 'N/A')}", 0, 1)
-            pdf.ln(5)
+            # Education
+            education = profile.get('education', {})
+            degree = education.get('degree', 'N/A') if isinstance(education, dict) else 'N/A'
+            institution = education.get('institution', 'N/A') if isinstance(education, dict) else 'N/A'
+            year = education.get('year', 'N/A') if isinstance(education, dict) else 'N/A'
             
-            # Credentials
-            if credentials:
-                pdf.set_font('Arial', 'B', 12)
-                pdf.cell(0, 10, 'Credentials', 0, 1)
-                pdf.set_font('Arial', '', 10)
+            # Skills
+            skills = profile.get('skills', [])
+            skills_str = ', '.join(skills) if skills else 'N/A'
+            
+            # Social links
+            social_links = profile.get('social_links', {})
+            linkedin = social_links.get('linkedin', '') if isinstance(social_links, dict) else ''
+            github = social_links.get('github', '') if isinstance(social_links, dict) else ''
+            
+            # Profile completion
+            profile_completion = profile.get('profile_completion', 0)
+            
+            # Create professional HTML content
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    @page {{
+                        size: A4;
+                        margin: 2cm;
+                    }}
+                    body {{
+                        font-family: 'Helvetica', 'Arial', sans-serif;
+                        color: #333;
+                        line-height: 1.6;
+                    }}
+                    .header {{
+                        text-align: center;
+                        border-bottom: 3px solid #2563eb;
+                        padding-bottom: 20px;
+                        margin-bottom: 30px;
+                    }}
+                    h1 {{
+                        color: #1e40af;
+                        font-size: 32px;
+                        margin-bottom: 10px;
+                        font-weight: bold;
+                    }}
+                    .contact-info {{
+                        color: #666;
+                        font-size: 14px;
+                        margin-top: 10px;
+                    }}
+                    h2 {{
+                        color: #2563eb;
+                        font-size: 20px;
+                        border-bottom: 2px solid #e5e7eb;
+                        padding-bottom: 8px;
+                        margin-top: 25px;
+                        margin-bottom: 15px;
+                        font-weight: bold;
+                    }}
+                    .section {{
+                        margin-bottom: 25px;
+                    }}
+                    .info-row {{
+                        margin: 8px 0;
+                        font-size: 14px;
+                    }}
+                    .label {{
+                        font-weight: bold;
+                        color: #1e40af;
+                        display: inline-block;
+                        width: 120px;
+                    }}
+                    .credential {{
+                        background-color: #f9fafb;
+                        border-left: 4px solid #2563eb;
+                        padding: 15px;
+                        margin: 15px 0;
+                        border-radius: 4px;
+                    }}
+                    .credential-title {{
+                        font-size: 16px;
+                        font-weight: bold;
+                        color: #1e40af;
+                        margin-bottom: 8px;
+                    }}
+                    .credential-info {{
+                        font-size: 13px;
+                        color: #555;
+                        margin: 5px 0;
+                    }}
+                    .status-badge {{
+                        display: inline-block;
+                        padding: 4px 12px;
+                        background-color: #10b981;
+                        color: white;
+                        border-radius: 12px;
+                        font-size: 12px;
+                        font-weight: bold;
+                        text-transform: uppercase;
+                    }}
+                    .skills-list {{
+                        display: flex;
+                        flex-wrap: wrap;
+                        gap: 8px;
+                        margin-top: 10px;
+                    }}
+                    .skill-tag {{
+                        background-color: #dbeafe;
+                        color: #1e40af;
+                        padding: 6px 12px;
+                        border-radius: 16px;
+                        font-size: 13px;
+                        display: inline-block;
+                    }}
+                    .bio {{
+                        font-size: 14px;
+                        color: #555;
+                        line-height: 1.8;
+                        text-align: justify;
+                    }}
+                    .footer {{
+                        margin-top: 40px;
+                        text-align: center;
+                        color: #999;
+                        font-size: 12px;
+                        border-top: 1px solid #e5e7eb;
+                        padding-top: 15px;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>{name}</h1>
+                    <div class="contact-info">
+                        {email} | {phone} | {location_str}
+                    </div>
+                </div>
+            """
+            
+            # Bio section
+            if bio:
+                html_content += f"""
+                <div class="section">
+                    <h2>Professional Summary</h2>
+                    <div class="bio">{bio}</div>
+                </div>
+                """
+            
+            # Education section
+            if degree != 'N/A' or institution != 'N/A':
+                html_content += f"""
+                <div class="section">
+                    <h2>Education</h2>
+                    <div class="info-row">
+                        <span class="label">Degree:</span> {degree}
+                    </div>
+                    <div class="info-row">
+                        <span class="label">Institution:</span> {institution}
+                    </div>
+                    <div class="info-row">
+                        <span class="label">Year:</span> {year}
+                    </div>
+                </div>
+                """
+            
+            # Skills section
+            if skills:
+                html_content += f"""
+                <div class="section">
+                    <h2>Skills</h2>
+                    <div class="skills-list">
+                """
+                for skill in skills:
+                    html_content += f'<span class="skill-tag">{skill}</span>'
                 
-                for cred in credentials:
-                    pdf.cell(0, 8, f"• {cred.get('credential_title', 'N/A')}", 0, 1)
+                html_content += """
+                    </div>
+                </div>
+                """
             
-            return pdf.output(dest='S').encode('latin1')
+            # Credentials section
+            html_content += """
+                <div class="section">
+                    <h2>Credentials & Certifications</h2>
+            """
+            
+            if credentials:
+                for cred in credentials:
+                    title = cred.get('credential_title', 'N/A')
+                    issuer = cred.get('issuer_name', 'N/A')
+                    status = cred.get('status', 'pending')
+                    issued_date = cred.get('issued_date', '')
+                    nsqf_level = cred.get('nsqf_level', '')
+                    description = cred.get('description', '')
+                    skill_tags = cred.get('skill_tags', [])
+                    
+                    # Format date
+                    if issued_date:
+                        try:
+                            issued_date = datetime.fromisoformat(str(issued_date).replace('Z', '+00:00')).strftime('%B %Y')
+                        except:
+                            issued_date = 'N/A'
+                    else:
+                        issued_date = 'N/A'
+                    
+                    status_color = '#10b981' if status == 'verified' else '#f59e0b'
+                    
+                    html_content += f"""
+                    <div class="credential">
+                        <div class="credential-title">{title}</div>
+                        <div class="credential-info"><strong>Issuer:</strong> {issuer}</div>
+                        <div class="credential-info"><strong>Issued:</strong> {issued_date}</div>
+                """
+                    
+                    if nsqf_level:
+                        html_content += f'<div class="credential-info"><strong>NSQF Level:</strong> {nsqf_level}</div>'
+                    
+                    html_content += f'<div class="credential-info"><span class="status-badge" style="background-color: {status_color};">{status}</span></div>'
+                    
+                    if description:
+                        html_content += f'<div class="credential-info" style="margin-top: 8px;">{description}</div>'
+                    
+                    if skill_tags:
+                        html_content += '<div class="credential-info" style="margin-top: 8px;"><strong>Skills:</strong> ' + ', '.join(skill_tags) + '</div>'
+                    
+                    html_content += """
+                    </div>
+                    """
+            else:
+                html_content += "<p>No credentials available</p>"
+            
+            html_content += """
+                </div>
+            """
+            
+            # Social links section
+            if linkedin or github:
+                html_content += """
+                <div class="section">
+                    <h2>Links</h2>
+                """
+                if linkedin:
+                    html_content += f'<div class="info-row"><span class="label">LinkedIn:</span> {linkedin}</div>'
+                if github:
+                    html_content += f'<div class="info-row"><span class="label">GitHub:</span> {github}</div>'
+                html_content += """
+                </div>
+                """
+            
+            # Footer
+            current_date = datetime.now().strftime('%B %d, %Y')
+            html_content += f"""
+                <div class="footer">
+                    <p>Generated on {current_date}</p>
+                    <p>Profile Completion: {profile_completion}%</p>
+                </div>
+            </body>
+            </html>
+            """
+            
+            # Generate PDF from HTML
+            pdf_bytes = HTML(string=html_content).write_pdf()
+            return pdf_bytes
             
         except ImportError:
             # Ultimate fallback - return a simple text file as bytes

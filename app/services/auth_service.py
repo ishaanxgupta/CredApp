@@ -182,6 +182,29 @@ class AuthService:
             result = await self.db.users.insert_one(user_doc)
             user_id = str(result.inserted_id)
             
+            # Auto-create learner profile if user is registering as learner
+            if user_data.role_type == "learner":
+                try:
+                    learner_profile = {
+                        "user_id": ObjectId(user_id),
+                        "full_name": user_data.full_name or "",
+                        "email": user_data.email.lower(),
+                        "phone_number": user_data.phone_number,
+                        "education": {},
+                        "skills": [],
+                        "bio": None,
+                        "location": {},
+                        "social_links": {},
+                        "profile_completion": 0.0,
+                        "created_at": datetime.utcnow(),
+                        "updated_at": datetime.utcnow()
+                    }
+                    await self.db.learners.insert_one(learner_profile)
+                    logger.info(f"Learner profile auto-created for user: {user_id}")
+                except Exception as profile_error:
+                    logger.error(f"Failed to create learner profile: {profile_error}")
+                    # Don't fail registration if profile creation fails
+            
             # Get user roles and permissions
             user_roles_perms = await self._get_user_roles_and_permissions(user_id)
             
