@@ -154,36 +154,60 @@ class LearnerService:
                 if filters.status:
                     query["status"] = filters.status.value
                 if filters.issuer:
-                    query["issuer_name"] = {"$regex": filters.issuer, "$options": "i"}
+                    query["metadata.issuer_name"] = {"$regex": filters.issuer, "$options": "i"}
                 if filters.nsqf_level:
-                    query["nsqf_level"] = filters.nsqf_level
+                    query["metadata.nsqf_level"] = filters.nsqf_level
                 if filters.tags:
-                    query["tags"] = {"$in": filters.tags}
+                    query["metadata.tags"] = {"$in": filters.tags}
                 if filters.date_from or filters.date_to:
                     date_query = {}
                     if filters.date_from:
                         date_query["$gte"] = filters.date_from
                     if filters.date_to:
                         date_query["$lte"] = filters.date_to
-                    query["issued_date"] = date_query
+                    query["metadata.issue_date"] = date_query
             
             credentials = await self.credentials_collection.find(
                 query,
                 {
                     "_id": 1,
-                    "issuer_name": 1,
-                    "credential_title": 1,
-                    "nsqf_level": 1,
+                    "vc_payload": 1,
+                    "metadata": 1,
                     "status": 1,
-                    "issued_date": 1,
-                    "tags": 1,
-                    "skill_tags": 1
+                    "credential_type": 1,
+                    "created_at": 1,
+                    "blockchain_status": 1,
+                    "blockchain_data": 1,
+                    "qr_code_data": 1
                 }
             ).skip(skip).limit(limit).to_list(None)
             
-            # Convert ObjectIds to strings
+            # Convert ObjectIds to strings and format response
+            formatted_credentials = []
             for cred in credentials:
-                cred["_id"] = str(cred["_id"])
+                metadata = cred.get("metadata", {})
+                vc_payload = cred.get("vc_payload", {})
+                credential_subject = vc_payload.get("credentialSubject", {})
+                issuer = vc_payload.get("issuer", {})
+                
+                formatted_cred = {
+                    "_id": str(cred["_id"]),
+                    "issuer_name": metadata.get("issuer_name") or issuer.get("name"),
+                    "credential_title": metadata.get("course_name") or credential_subject.get("achievement"),
+                    "nsqf_level": metadata.get("nsqf_level"),
+                    "status": cred.get("status"),
+                    "blockchain_status": cred.get("blockchain_status"),
+                    "issued_date": metadata.get("issue_date") or vc_payload.get("issuanceDate"),
+                    "completion_date": metadata.get("completion_date"),
+                    "tags": metadata.get("tags", []),
+                    "skill_tags": metadata.get("skill_tags", []),
+                    "credential_type": cred.get("credential_type"),
+                    "credential_hash": cred.get("blockchain_data", {}).get("credential_hash"),
+                    "qr_code_image": cred.get("qr_code_data", {}).get("qr_code_image")
+                }
+                formatted_credentials.append(formatted_cred)
+            
+            credentials = formatted_credentials
             
             logger.info(f"Retrieved {len(credentials)} credentials for learner: {user_id}")
             return credentials
