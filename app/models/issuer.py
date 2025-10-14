@@ -25,6 +25,14 @@ class CredentialStatus(str, Enum):
     PROCESSING = "processing"
     VERIFIED = "verified"
     REVOKED = "revoked"
+    # New workflow statuses
+    DRAFT = "draft"
+    OCR_PROCESSING = "ocr_processing"
+    OCR_COMPLETED = "ocr_completed"
+    OCR_FAILED = "ocr_failed"
+    READY_FOR_ISSUE = "ready_for_issue"
+    BLOCKCHAIN_PENDING = "blockchain_pending"
+    BLOCKCHAIN_FAILED = "blockchain_failed"
 
 
 class CredentialType(str, Enum):
@@ -354,6 +362,140 @@ class WebhookInDB(BaseModel):
     active: bool = Field(default=True, description="Whether webhook is active")
     last_triggered: Optional[datetime] = Field(None, description="Last trigger timestamp")
     failure_count: int = Field(default=0, description="Number of consecutive failures")
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
+        json_encoders={ObjectId: str}
+    )
+
+
+# New workflow models
+class CredentialUploadRequest(BaseModel):
+    """Schema for credential file upload."""
+    
+    learner_id: str = Field(..., description="Learner user ID")
+    idempotency_key: str = Field(..., description="Unique key for idempotent upload")
+    credential_title: Optional[str] = Field(None, description="Credential title")
+    description: Optional[str] = Field(None, description="Credential description")
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "learner_id": "507f1f77bcf86cd799439011",
+                "idempotency_key": "cert_123_2024_01_15",
+                "credential_title": "Python Programming Certificate",
+                "description": "Certificate for completing Python programming course"
+            }
+        }
+    )
+
+
+class CredentialVerifyRequest(BaseModel):
+    """Schema for credential verification after OCR."""
+    
+    credential_title: str = Field(..., description="Credential title")
+    description: str = Field(..., description="Credential description")
+    nsqf_level: Optional[int] = Field(None, description="NSQF level")
+    skill_tags: List[str] = Field(default=[], description="Skill tags")
+    tags: List[str] = Field(default=[], description="Additional tags")
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "credential_title": "Python Programming Certificate",
+                "description": "Certificate for completing Python programming course",
+                "nsqf_level": 4,
+                "skill_tags": ["python", "programming", "software-development"],
+                "tags": ["certificate", "programming", "2024"]
+            }
+        }
+    )
+
+
+class CredentialDeployRequest(BaseModel):
+    """Schema for credential deployment to blockchain."""
+    
+    wait_for_confirmation: bool = Field(default=False, description="Wait for blockchain confirmation")
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "wait_for_confirmation": False
+            }
+        }
+    )
+
+
+class CredentialWorkflowResponse(BaseModel):
+    """Response model for credential workflow operations."""
+    
+    credential_id: str = Field(..., description="Unique credential identifier")
+    status: CredentialStatus = Field(..., description="Current processing status")
+    learner_id: str = Field(..., description="Learner identifier")
+    issuer_id: str = Field(..., description="Issuer identifier")
+    credential_title: Optional[str] = Field(None, description="Credential title")
+    description: Optional[str] = Field(None, description="Credential description")
+    artifact_url_raw: Optional[str] = Field(None, description="Original uploaded file URL")
+    artifact_url: Optional[str] = Field(None, description="Final processed file URL")
+    vc_payload: Optional[Dict[str, Any]] = Field(None, description="Verifiable credential JSON-LD")
+    blockchain_data: Optional[Dict[str, Any]] = Field(None, description="Blockchain transaction data")
+    qr_code_data: Optional[Dict[str, Any]] = Field(None, description="QR code data")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Processing metadata")
+    errors: Optional[List[str]] = Field(None, description="Processing errors")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    verified_at: Optional[datetime] = Field(None, description="Verification timestamp")
+    
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "credential_id": "cred_507f1f77bcf86cd799439011",
+                "status": "verified",
+                "learner_id": "learner_507f1f77bcf86cd799439012",
+                "issuer_id": "issuer_507f1f77bcf86cd799439013",
+                "credential_title": "Python Programming Certificate",
+                "description": "Certificate for completing Python programming course",
+                "artifact_url_raw": "https://storage.example.com/raw/cert_123.pdf",
+                "artifact_url": "https://storage.example.com/final/cert_123_with_qr.pdf",
+                "vc_payload": {"@context": ["https://www.w3.org/2018/credentials/v1"]},
+                "blockchain_data": {"transaction_hash": "0x123...abc"},
+                "qr_code_data": {"verification_url": "https://verify.example.com/cred_123"},
+                "metadata": {"ocr_confidence": 0.95},
+                "errors": None,
+                "created_at": "2024-01-15T10:30:00Z",
+                "updated_at": "2024-01-15T10:35:00Z",
+                "verified_at": "2024-01-15T10:35:00Z"
+            }
+        }
+    )
+
+
+class CredentialWorkflowInDB(BaseModel):
+    """Credential workflow model as stored in database."""
+    
+    id: PyObjectId = Field(default_factory=PyObjectId, alias="_id")
+    issuer_id: str = Field(..., description="Issuer identifier")
+    learner_id: str = Field(..., description="Learner identifier")
+    credential_title: Optional[str] = Field(None, description="Credential title")
+    issuer_name: Optional[str] = Field(None, description="Issuer name")
+    description: Optional[str] = Field(None, description="Credential description")
+    nsqf_level: Optional[int] = Field(None, description="NSQF level")
+    skill_tags: List[str] = Field(default=[], description="Skill tags")
+    tags: List[str] = Field(default=[], description="Additional tags")
+    credential_type: str = Field(default="digital-certificate", description="Credential type")
+    artifact_url_raw: Optional[str] = Field(None, description="Original uploaded file URL")
+    artifact_url: Optional[str] = Field(None, description="Final processed file URL")
+    vc_payload: Optional[Dict[str, Any]] = Field(None, description="Verifiable credential JSON-LD")
+    idempotency_key: str = Field(..., description="Idempotency key")
+    status: CredentialStatus = Field(default=CredentialStatus.DRAFT, description="Processing status")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="OCR confidence, processing times, errors")
+    qr_code_data: Optional[Dict[str, Any]] = Field(None, description="QR image, verification URL")
+    blockchain_data: Optional[Dict[str, Any]] = Field(None, description="Transaction hash, credential hash")
+    errors: Optional[List[str]] = Field(None, description="Processing errors")
+    verified_at: Optional[datetime] = Field(None, description="Verification timestamp")
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     
