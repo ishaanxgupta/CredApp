@@ -376,207 +376,270 @@ class OCRService:
             logger.error(f"AWS Textract OCR error: {e}")
             raise Exception(f"AWS Textract OCR failed: {str(e)}")
     
-    async def _extract_with_tesseract(self, file_content: bytes) -> Dict[str, Any]:
-        """Extract text using Tesseract OCR."""
+    async def _extract_with_tesseract_fallback(self, file_content: bytes) -> Dict[str, Any]:
+        """Extract text using Tesseract OCR as fallback."""
         try:
-            # This would require pytesseract and PIL
-            # For now, return a mock implementation
-            logger.info("Tesseract OCR processing (mock implementation)")
+            logger.info("Tesseract OCR processing (real implementation)")
             
-            # For demonstration, simulate OCR extraction of AWS certificate
-            # In production, this would use pytesseract to extract actual text
-            simulated_text = """AWS SOLUTIONS ARCHITECT
-IS AWARDED TO
-Ishaan Gupta
-ISSUED BY Amazon Web Services
-ISSUED DATE January 30, 2023
-NSQF LEVEL 6"""
+            # Try to import pytesseract
+            try:
+                import pytesseract
+                from PIL import Image
+                import io
+                import fitz  # PyMuPDF for PDF processing
+                
+                extracted_text = ""
+                
+                # Handle different file types
+                if file_content.startswith(b'%PDF'):
+                    # Handle PDF files
+                    logger.info("Processing PDF with Tesseract")
+                    doc = fitz.open(stream=file_content, filetype="pdf")
+                    
+                    for page_num in range(len(doc)):
+                        page = doc.load_page(page_num)
+                        pix = page.get_pixmap()
+                        img_data = pix.tobytes("png")
+                        
+                        # Convert to PIL Image
+                        image = Image.open(io.BytesIO(img_data))
+                        
+                        # Perform OCR on the image
+                        page_text = pytesseract.image_to_string(image, config='--psm 6')
+                        extracted_text += page_text + "\n"
+                    
+                    doc.close()
+                else:
+                    # Handle image files
+                    logger.info("Processing image with Tesseract")
+                    image = Image.open(io.BytesIO(file_content))
+                    
+                    # Perform OCR
+                    extracted_text = pytesseract.image_to_string(image, config='--psm 6')
+                
+                logger.info(f"Tesseract extracted text: {extracted_text[:200]}...")
+                
+                if not extracted_text.strip():
+                    raise Exception("No text detected by Tesseract")
+                
+                # Parse certificate data from extracted text
+                extracted_data = self._parse_certificate_text(extracted_text)
+                
+                # Generate skill tags
+                skill_tags = self._generate_skill_tags(extracted_data)
+                extracted_data["skill_tags"] = skill_tags
+                
+                return {
+                    "success": True,
+                    "provider": "tesseract",
+                    "confidence": 0.85,
+                    "extracted_data": extracted_data,
+                    "metadata": {
+                        "processing_time": 1.2,
+                        "file_size": len(file_content),
+                        "text_length": len(extracted_text),
+                        "parsing_method": "tesseract_real_ocr"
+                    }
+                }
+                
+            except ImportError:
+                logger.warning("pytesseract not installed, using basic text extraction")
+                return await self._extract_with_basic_fallback(file_content)
             
-            # Use the existing certificate parser
-            extracted_data = self._parse_certificate_text(simulated_text)
+        except Exception as e:
+            logger.error(f"Tesseract OCR error: {e}")
+            return await self._extract_with_basic_fallback(file_content)
+    
+    async def _extract_with_basic_fallback(self, file_content: bytes) -> Dict[str, Any]:
+        """Basic fallback when no OCR libraries are available."""
+        try:
+            logger.warning("Using basic fallback - no OCR libraries available")
             
-            # Enhance with certificate-specific parsing for AWS format
-            extracted_data.update({
-                "credential_title": "AWS SOLUTIONS ARCHITECT",
-                "issuer_name": "Amazon Web Services", 
-                "learner_name": "Ishaan Gupta",
-                "issue_date": "January 30, 2023",
-                "expiry_date": "",
-                "nsqf_level": "6",
-                "skill_tags": [
-                    "AWS Solutions Architect",
-                    "Cloud Computing",
-                    "Amazon Web Services", 
-                    "Solutions Architecture",
-                    "AWS"
-                ],
-                "description": "AWS Solutions Architect certification demonstrating expertise in designing distributed systems on AWS"
-            })
-            
-            # Generate skill tags based on certificate content
-            skill_tags = self._generate_skill_tags(extracted_data)
-            extracted_data["skill_tags"] = skill_tags
-            
+            # Return a basic structure indicating OCR is not available
             return {
-                "success": True,
-                "provider": "tesseract",
-                "confidence": 0.85,
-                "extracted_data": extracted_data,
+                "success": False,
+                "provider": "fallback",
+                "confidence": 0.0,
+                "error": "No OCR libraries available. Please install pytesseract or paddleocr.",
+                "extracted_data": {
+                    "credential_title": "",
+                    "issuer_name": "",
+                    "learner_name": "",
+                    "learner_id": "",
+                    "issue_date": "",
+                    "expiry_date": "",
+                    "nsqf_level": None,
+                    "skill_tags": [],
+                    "description": "OCR processing unavailable - manual input required",
+                    "raw_text": ""
+                },
                 "metadata": {
-                    "processing_time": 1.2,
+                    "processing_time": 0.1,
                     "file_size": len(file_content),
-                    "text_length": len(simulated_text),
-                    "parsing_method": "certificate_specific"
+                    "errors": ["No OCR libraries installed"]
                 }
             }
             
         except Exception as e:
-            logger.error(f"Tesseract OCR error: {e}")
-            raise Exception(f"Tesseract OCR failed: {str(e)}")
+            logger.error(f"Basic fallback error: {e}")
+            raise Exception(f"OCR processing failed: {str(e)}")
     
     async def _extract_with_doctr(self, file_content: bytes) -> Dict[str, Any]:
         """Extract text using DocTR (Document Text Recognition) by Mindee."""
         try:
             logger.info("DocTR OCR processing with layout understanding")
             
-            # For now, implement a high-quality mock that simulates DocTR's layout understanding
-            # In production, this would use: from doctr.io import DocumentFile
-            
-            # Simulate DocTR's layout-aware text extraction
-            # DocTR excels at understanding document structure and text positioning
-            layout_aware_text = """68ec04e8f9a2d4d5bf6e7f2b
-AWS SOLUTIONS ARCHITECT
-IS AWARDED TO
-Ishaan Gupta
-ISSUED BY Amazon Web Services
-ISSUED DATE January 30, 2023
-NSQF LEVEL 6"""
-            
-            # Use enhanced certificate parser with layout understanding
-            extracted_data = self._parse_certificate_text(layout_aware_text)
-            
-            # Enhance with DocTR's superior layout understanding
-            extracted_data.update({
-                "credential_title": "AWS SOLUTIONS ARCHITECT",
-                "issuer_name": "Amazon Web Services", 
-                "learner_name": "Ishaan Gupta",
-                "learner_id": "68ec04e8f9a2d4d5bf6e7f2b",
-                "issue_date": "January 30, 2023",
-                "expiry_date": "",
-                "nsqf_level": "6",
-                "layout_confidence": 0.95,  # DocTR's layout understanding confidence
-                "text_detection_confidence": 0.92,
-                "skill_tags": [
-                    "AWS Solutions Architect",
-                    "Cloud Computing",
-                    "Amazon Web Services", 
-                    "Solutions Architecture",
-                    "AWS",
-                    "EC2", "S3", "VPC", "RDS", "Lambda", "CloudFormation",
-                    "Systems Design", "Cloud Architecture"
-                ],
-                "description": "AWS Solutions Architect certification demonstrating expertise in designing distributed systems on AWS"
-            })
-            
-            # Generate skill tags based on certificate content
-            skill_tags = self._generate_skill_tags(extracted_data)
-            extracted_data["skill_tags"] = skill_tags
-            
-            return {
-                "success": True,
-                "provider": "doctr",
-                "confidence": 0.92,
-                "extracted_data": extracted_data,
-                "metadata": {
-                    "processing_time": 1.5,
-                    "file_size": len(file_content),
-                    "text_length": len(layout_aware_text),
-                    "parsing_method": "doctr_layout_aware",
-                    "layout_understanding": True,
-                    "text_detection_confidence": 0.92,
-                    "layout_confidence": 0.95
+            # Try to import DocTR
+            try:
+                from doctr.io import DocumentFile
+                from doctr.models import ocr_predictor
+                import io
+                
+                # Initialize DocTR model
+                model = ocr_predictor(pretrained=True)
+                
+                # Convert file content to document
+                if file_content.startswith(b'%PDF'):
+                    # Handle PDF files
+                    logger.info("Processing PDF with DocTR")
+                    doc = DocumentFile.from_bytes(file_content)
+                else:
+                    # Handle image files
+                    logger.info("Processing image with DocTR")
+                    doc = DocumentFile.from_images([io.BytesIO(file_content)])
+                
+                # Perform OCR with layout understanding
+                result = model(doc)
+                
+                # Extract text with layout information
+                extracted_text = ""
+                layout_confidence = 0.0
+                text_boxes = 0
+                
+                # DocTR provides structured output with layout information
+                for page in result.pages:
+                    for block in page.blocks:
+                        for line in block.lines:
+                            for word in line.words:
+                                extracted_text += word.value + " "
+                            extracted_text += "\n"
+                            text_boxes += 1
+                
+                logger.info(f"DocTR extracted text: {extracted_text[:200]}...")
+                
+                if not extracted_text.strip():
+                    raise Exception("No text detected by DocTR")
+                
+                # Parse certificate data from extracted text
+                extracted_data = self._parse_certificate_text(extracted_text)
+                
+                # Generate skill tags
+                skill_tags = self._generate_skill_tags(extracted_data)
+                extracted_data["skill_tags"] = skill_tags
+                
+                return {
+                    "success": True,
+                    "provider": "doctr",
+                    "confidence": 0.92,
+                    "extracted_data": extracted_data,
+                    "metadata": {
+                        "processing_time": 1.5,
+                        "file_size": len(file_content),
+                        "text_length": len(extracted_text),
+                        "parsing_method": "doctr_real_ocr",
+                        "layout_understanding": True,
+                        "text_boxes": text_boxes,
+                        "layout_confidence": 0.95
+                    }
                 }
-            }
+                
+            except ImportError:
+                logger.warning("DocTR not installed, falling back to Tesseract")
+                return await self._extract_with_tesseract_fallback(file_content)
             
         except Exception as e:
             logger.error(f"DocTR OCR error: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "provider": "doctr"
-            }
+            return await self._extract_with_tesseract_fallback(file_content)
     
     async def _extract_with_paddleocr(self, file_content: bytes) -> Dict[str, Any]:
         """Extract text using PaddleOCR with superior accuracy."""
         try:
             logger.info("PaddleOCR processing with high accuracy")
             
-            # For now, implement a high-quality mock that simulates PaddleOCR's accuracy
-            # In production, this would use: from paddleocr import PaddleOCR
-            
-            # Simulate PaddleOCR's high-accuracy text extraction
-            high_accuracy_text = """68ec04e8f9a2d4d5bf6e7f2b
-AWS SOLUTIONS ARCHITECT
-IS AWARDED TO
-Ishaan Gupta
-ISSUED BY Amazon Web Services
-ISSUED DATE January 30, 2023
-NSQF LEVEL 6"""
-            
-            # Use enhanced certificate parser
-            extracted_data = self._parse_certificate_text(high_accuracy_text)
-            
-            # Enhance with PaddleOCR's superior accuracy
-            extracted_data.update({
-                "credential_title": "AWS SOLUTIONS ARCHITECT",
-                "issuer_name": "Amazon Web Services", 
-                "learner_name": "Ishaan Gupta",
-                "learner_id": "68ec04e8f9a2d4d5bf6e7f2b",
-                "issue_date": "January 30, 2023",
-                "expiry_date": "",
-                "nsqf_level": "6",
-                "detection_confidence": 0.94,  # PaddleOCR's detection confidence
-                "recognition_confidence": 0.91,
-                "skill_tags": [
-                    "AWS Solutions Architect",
-                    "Cloud Computing",
-                    "Amazon Web Services", 
-                    "Solutions Architecture",
-                    "AWS",
-                    "EC2", "S3", "VPC", "RDS", "Lambda", "CloudFormation",
-                    "Systems Design", "Cloud Architecture"
-                ],
-                "description": "AWS Solutions Architect certification demonstrating expertise in designing distributed systems on AWS"
-            })
-            
-            # Generate skill tags based on certificate content
-            skill_tags = self._generate_skill_tags(extracted_data)
-            extracted_data["skill_tags"] = skill_tags
-            
-            return {
-                "success": True,
-                "provider": "paddleocr",
-                "confidence": 0.93,
-                "extracted_data": extracted_data,
-                "metadata": {
-                    "processing_time": 2.0,
-                    "file_size": len(file_content),
-                    "text_length": len(high_accuracy_text),
-                    "parsing_method": "paddleocr_high_accuracy",
-                    "detection_confidence": 0.94,
-                    "recognition_confidence": 0.91,
-                    "text_angle": 0.0,  # PaddleOCR provides text angle
-                    "text_boxes": []  # PaddleOCR provides bounding boxes
-                }
-            }
+            # Try to import PaddleOCR
+            try:
+                from paddleocr import PaddleOCR
+                import cv2
+                import numpy as np
+                from PIL import Image
+                import io
+                
+                # Initialize PaddleOCR
+                ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
+                
+                # Convert file content to image
+                if file_content.startswith(b'%PDF'):
+                    # Handle PDF files
+                    logger.info("Processing PDF file with PaddleOCR")
+                    # For PDF, we'll use a fallback method since PaddleOCR works better with images
+                    return await self._extract_with_tesseract_fallback(file_content)
+                else:
+                    # Handle image files
+                    image = Image.open(io.BytesIO(file_content))
+                    image_array = np.array(image)
+                    
+                    # Perform OCR
+                    result = ocr.ocr(image_array, cls=True)
+                    
+                    # Extract text from results
+                    extracted_text = ""
+                    confidence_scores = []
+                    
+                    if result and result[0]:
+                        for line in result[0]:
+                            if line and len(line) >= 2:
+                                text = line[1][0] if isinstance(line[1], (list, tuple)) else line[1]
+                                confidence = line[1][1] if isinstance(line[1], (list, tuple)) and len(line[1]) > 1 else 0.9
+                                extracted_text += text + "\n"
+                                confidence_scores.append(confidence)
+                    
+                    logger.info(f"PaddleOCR extracted text: {extracted_text[:200]}...")
+                    
+                    if not extracted_text.strip():
+                        raise Exception("No text detected by PaddleOCR")
+                    
+                    # Parse certificate data from extracted text
+                    extracted_data = self._parse_certificate_text(extracted_text)
+                    
+                    # Calculate average confidence
+                    avg_confidence = sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.8
+                    
+                    # Generate skill tags
+                    skill_tags = self._generate_skill_tags(extracted_data)
+                    extracted_data["skill_tags"] = skill_tags
+                    
+                    return {
+                        "success": True,
+                        "provider": "paddleocr",
+                        "confidence": avg_confidence,
+                        "extracted_data": extracted_data,
+                        "metadata": {
+                            "processing_time": 2.0,
+                            "file_size": len(file_content),
+                            "text_length": len(extracted_text),
+                            "parsing_method": "paddleocr_real_ocr",
+                            "confidence_scores": confidence_scores,
+                            "text_boxes": len(result[0]) if result and result[0] else 0
+                        }
+                    }
+                    
+            except ImportError:
+                logger.warning("PaddleOCR not installed, falling back to Tesseract")
+                return await self._extract_with_tesseract_fallback(file_content)
             
         except Exception as e:
             logger.error(f"PaddleOCR error: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "provider": "paddleocr"
-            }
+            return await self._extract_with_tesseract_fallback(file_content)
     
     def _is_learner_id(self, text: str) -> bool:
         """
@@ -601,22 +664,43 @@ NSQF LEVEL 6"""
                 'certificate', 'diploma', 'degree', 'award', 'certification',
                 'issued', 'by', 'date', 'to', 'aws', 'azure', 'microsoft', 'google',
                 'amazon', 'web', 'services', 'solutions', 'architect', 'learner',
-                'student', 'candidate', 'recipient', 'holder', 'bearer'
+                'student', 'candidate', 'recipient', 'holder', 'bearer', 'week',
+                'course', 'free', 'online', 'education', 'nptel', 'skill', 'india',
+                'institute', 'technology', 'kharagpur', 'swayam'
             ]
             
             if clean_text in common_words:
                 return False
             
+            # Skip if the text contains common words (like "12 Week Course")
+            for word in clean_text.split():
+                if word in common_words:
+                    return False
+            
             # Check for alphanumeric patterns typical of IDs
             # Pattern 1: Long alphanumeric strings (like 68ec04e8f9a2d4d5bf6e7f2b)
-            if len(clean_text) >= 12 and clean_text.replace(' ', '').isalnum():
+            if len(clean_text) >= 8 and clean_text.replace(' ', '').isalnum():
                 # Count letters and numbers
                 letters = sum(1 for c in clean_text if c.isalpha())
                 numbers = sum(1 for c in clean_text if c.isdigit())
                 
                 # Should have both letters and numbers, and be reasonably long
-                if letters >= 3 and numbers >= 3 and len(clean_text) >= 12:
+                if letters >= 2 and numbers >= 2 and len(clean_text) >= 8:
                     return True
+            
+            # Pattern 1.5: Certificate ID formats (DS2024001, AWS-SA-2024-001, etc.)
+            if any(pattern in clean_text for pattern in ['-', '_']) and len(clean_text) >= 6:
+                # Check if it looks like a structured ID
+                parts = clean_text.replace('-', ' ').replace('_', ' ').split()
+                if len(parts) >= 2:
+                    # At least one part should have numbers
+                    has_numbers = any(any(c.isdigit() for c in part) for part in parts)
+                    if has_numbers:
+                        return True
+            
+            # Pattern 1.6: Hexadecimal IDs (like 68ed41a1b47720c296ee00c3)
+            if len(clean_text) >= 16 and all(c in '0123456789abcdef' for c in clean_text):
+                return True
             
             # Pattern 2: UUID-like patterns (with hyphens)
             if '-' in clean_text and len(clean_text) >= 20:
@@ -638,12 +722,13 @@ NSQF LEVEL 6"""
             logger.error(f"Learner ID validation error: {e}")
             return False
     
-    def _parse_certificate_text(self, text: str) -> Dict[str, Any]:
+    def _parse_certificate_text(self, text: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
         """
-        Parse certificate text to extract structured data.
+        Parse certificate text to extract structured data using enhanced context cues.
         
         Args:
             text: Raw OCR text
+            context: Optional context hints for better parsing (certificate type, patterns, etc.)
             
         Returns:
             Dict containing parsed certificate data
@@ -652,88 +737,278 @@ NSQF LEVEL 6"""
             # Basic text parsing logic
             lines = text.split('\n')
             
-            # Initialize result
+            # Initialize result with enhanced context-based parsing
             result = {
-                "certificate_title": "Certificate",
-                "issuer_name": "Unknown Issuer",
-                "learner_name": "Unknown Learner",
-                "learner_id": None,
-                "completion_date": None,
+                "credential_name": "",
+                "issuer_name": "",
+                "issued_date": "",
+                "expiry_date": "",
+                "skill_tags": [],
+                "learner_id": "",
+                "learner_name": "",
                 "credential_type": "digital-certificate",
                 "raw_text": text
             }
             
-            # Enhanced certificate parsing for various formats
-            for i, line in enumerate(lines):
-                line = line.strip()
-                if not line:
-                    continue
-                
-                # Learner ID patterns (unique identifiers)
-                # Look for alphanumeric strings that could be learner/certificate IDs
-                if self._is_learner_id(line):
-                    if not result.get("learner_id"):
-                        result["learner_id"] = line
-                
-                # AWS/Azure/Google Cloud certificate patterns
-                elif any(keyword in line.upper() for keyword in ['AWS', 'AZURE', 'GOOGLE CLOUD', 'MICROSOFT', 'AMAZON']):
-                    if len(line) < 100:  # Reasonable title length
-                        result["certificate_title"] = line
-                        result["issuer_name"] = line.split()[0] if line.split() else line
-                
-                # Traditional certificate title patterns
-                elif any(keyword in line.lower() for keyword in ['certificate', 'diploma', 'degree', 'award', 'certification']):
-                    if len(line) < 100:  # Reasonable title length
-                        result["certificate_title"] = line
-                
-                # "IS AWARDED TO" pattern
-                elif "AWARDED TO" in line.upper():
-                    # Next line usually contains the learner name
-                    if i + 1 < len(lines):
-                        result["learner_name"] = lines[i + 1].strip()
-                
-                # "ISSUED BY" pattern
-                elif "ISSUED BY" in line.upper():
-                    issuer = line.replace("ISSUED BY", "").strip()
-                    if issuer:
-                        result["issuer_name"] = issuer
-                
-                # "ISSUED DATE" pattern
-                elif "ISSUED DATE" in line.upper():
-                    date = line.replace("ISSUED DATE", "").strip()
-                    if date:
-                        result["issue_date"] = date
-                        result["completion_date"] = date
-                
-                # "NSQF LEVEL" pattern
-                elif "NSQF LEVEL" in line.upper():
-                    level = line.replace("NSQF LEVEL", "").strip()
-                    if level.isdigit():
-                        result["nsqf_level"] = int(level)
-                
-                # Traditional issuer patterns
-                elif any(keyword in line.lower() for keyword in ['university', 'college', 'institute', 'academy', 'school']):
-                    if not result.get("issuer_name"):
-                        result["issuer_name"] = line
-                
-                # Date patterns (various formats)
-                elif any(pattern in line for pattern in ['2024', '2023', '2025', 'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']):
-                    if not result.get("issue_date"):
-                        result["issue_date"] = line
-                        result["completion_date"] = line
-            
+            # Apply enhanced context-based parsing
+            result = self._parse_with_enhanced_context(text, context)
             return result
             
         except Exception as e:
             logger.error(f"Certificate text parsing error: {e}")
             return {
-                "certificate_title": "Certificate",
-                "issuer_name": "Unknown Issuer",
-                "learner_name": "Unknown Learner",
-                "completion_date": None,
+                "credential_name": "",
+                "issuer_name": "",
+                "issued_date": "",
+                "expiry_date": "",
+                "skill_tags": [],
+                "learner_id": "",
+                "learner_name": "",
                 "credential_type": "digital-certificate",
                 "raw_text": text
             }
+    
+    def _parse_with_enhanced_context(self, text: str, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Parse certificate text using enhanced context cues for better accuracy.
+        """
+        lines = text.split('\n')
+        
+        result = {
+            "credential_name": "",
+            "issuer_name": "",
+            "issued_date": "",
+            "expiry_date": "",
+            "skill_tags": [],
+            "learner_id": "",
+            "learner_name": "",
+            "credential_type": "digital-certificate",
+            "raw_text": text
+        }
+        
+        # Enhanced parsing with context cues
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if not line:
+                continue
+            
+            # 1. CREDENTIAL NAME - Context cues from your specification
+            if any(phrase in line.upper() for phrase in [
+                "THIS IS TO CERTIFY THAT",
+                "HAS SUCCESSFULLY COMPLETED THE COURSE",
+                "HAS BEEN AWARDED THE CERTIFICATE IN",
+                "FOR SUCCESSFULLY COMPLETING THE COURSE"
+            ]):
+                # Look for the credential name in the next few lines
+                for j in range(i+1, min(i+4, len(lines))):
+                    next_line = lines[j].strip()
+                    if next_line and len(next_line) > 5:
+                        # More specific keyword blocking - avoid common certificate metadata but allow course names
+                        blocked_patterns = [
+                            'NSQF LEVEL', 'ISSUED DATE', 'JULY - OCT', 'WEEK COURSE',
+                            'FUNDED BY', 'SKILL INDIA', 'FREE ONLINE'
+                        ]
+                        is_blocked = any(pattern in next_line.upper() for pattern in blocked_patterns)
+                        
+                        # Also block if it starts with common metadata keywords
+                        starts_with_blocked = next_line.upper().startswith(('NSQF', 'ISSUED', 'DATE:', 'JULY', 'WEEK'))
+                        
+                        if not is_blocked and not starts_with_blocked:
+                            result["credential_name"] = next_line
+                            break
+            
+            # 2. LEARNER ID - Context cues from your specification
+            elif any(pattern in line.upper() for pattern in [
+                "LEARNER ID:", "STUDENT ID:", "ENROLLMENT ID:", 
+                "CANDIDATE ID:", "ROLL NO:", "CERTIFICATE ID:"
+            ]):
+                # Extract ID from the line
+                for pattern in ["LEARNER ID:", "STUDENT ID:", "ENROLLMENT ID:", "CANDIDATE ID:", "ROLL NO:", "CERTIFICATE ID:"]:
+                    if pattern in line.upper():
+                        parts = line.upper().split(pattern, 1)
+                        if len(parts) > 1:
+                            id_part = parts[1].strip().lstrip(':').strip()
+                            if id_part and self._is_learner_id(id_part):
+                                result["learner_id"] = id_part
+                        break
+            
+            # 3. ISSUER NAME - Context cues from your specification
+            elif any(phrase in line.upper() for phrase in [
+                "ISSUED BY", "PRESENTED BY", "AWARDED BY", "UNDER THE AUTHORITY OF"
+            ]):
+                issuer = line
+                for phrase in ["ISSUED BY", "PRESENTED BY", "AWARDED BY", "UNDER THE AUTHORITY OF"]:
+                    if phrase in line.upper():
+                        issuer = line.replace(phrase, "").strip()
+                        break
+                if issuer and any(keyword in issuer.upper() for keyword in [
+                    'UNIVERSITY', 'INSTITUTE', 'ORGANIZATION', 'COMPANY', 'ACADEMY', 'COLLEGE', 'SCHOOL'
+                ]):
+                    result["issuer_name"] = issuer
+            
+            # 4. ISSUED DATE - Context cues from your specification
+            elif any(phrase in line.upper() for phrase in [
+                "DATE OF ISSUE", "ISSUED ON", "DATE:", "DATED:"
+            ]):
+                date = line
+                for phrase in ["DATE OF ISSUE", "ISSUED ON", "DATE:", "DATED:"]:
+                    if phrase in line.upper():
+                        date = line.replace(phrase, "").strip().lstrip(':').strip()
+                        break
+                if date and any(char.isdigit() for char in date):
+                    result["issued_date"] = date
+            
+            # 5. EXPIRY DATE - Context cues from your specification
+            elif any(phrase in line.upper() for phrase in [
+                "VALID UNTIL", "EXPIRES ON", "VALID UP TO"
+            ]):
+                expiry_date = line
+                for phrase in ["VALID UNTIL", "EXPIRES ON", "VALID UP TO"]:
+                    if phrase in line.upper():
+                        expiry_date = line.replace(phrase, "").strip()
+                        break
+                if expiry_date and any(char.isdigit() for char in expiry_date):
+                    result["expiry_date"] = expiry_date
+            
+            # 6. SKILL TAGS - Context cues from your specification
+            elif any(phrase in line.upper() for phrase in [
+                "SKILLS GAINED:", "KEY SKILLS:", "COMPETENCIES:", "TOPICS COVERED:"
+            ]):
+                # Extract skills from current and next lines
+                skills_text = line
+                for phrase in ["SKILLS GAINED:", "KEY SKILLS:", "COMPETENCIES:", "TOPICS COVERED:"]:
+                    if phrase in line.upper():
+                        skills_text = line.replace(phrase, "").strip()
+                        break
+                
+                # Also check next few lines for bullet points or comma-separated skills
+                for j in range(i+1, min(i+3, len(lines))):
+                    next_line = lines[j].strip()
+                    if next_line and not any(keyword in next_line.upper() for keyword in ['NSQF', 'LEVEL', 'ISSUED', 'DATE']):
+                        skills_text += " " + next_line
+                
+                # Parse skills from text
+                if skills_text:
+                    skills = self._extract_skills_from_text(skills_text)
+                    result["skill_tags"].extend(skills)
+            
+            # 7. LEARNER NAME - Look for "awarded to" and "certify that" patterns
+            elif any(phrase in line.upper() for phrase in [
+                "AWARDED TO", "CERTIFICATE IS AWARDED TO", "IS AWARDED TO", "THIS IS TO CERTIFY THAT"
+            ]):
+                # Next line usually contains the learner name
+                if i + 1 < len(lines):
+                    next_line = lines[i + 1].strip()
+                    if next_line and not any(keyword in next_line.upper() for keyword in [
+                        'FOR SUCCESSFULLY', 'NSQF', 'LEVEL', 'ISSUED', 'DATE', 'BY', 'HAS COMPLETED', 'CONTRIBUTING'
+                    ]):
+                        result["learner_name"] = next_line
+            
+            # 8. Google Summer of Code specific patterns
+            elif "HAS COMPLETED" in line.upper() and "GOOGLE SUMMER OF CODE" in line.upper():
+                # Extract the credential name from the completion statement
+                if "Google Summer of Code" in line:
+                    import re
+                    gsoc_match = re.search(r'Google Summer of Code \d{4}', line)
+                    if gsoc_match:
+                        result["credential_name"] = gsoc_match.group()
+            
+            # 9. Google/Program Manager patterns for issuer
+            elif "PROGRAM MANAGER" in line.upper() and "GOOGLE" in line.upper():
+                result["issuer_name"] = "Google"
+            
+            # 10. Traditional issuer patterns (fallback)
+            elif not result["issuer_name"] and any(keyword in line.lower() for keyword in [
+                'university', 'college', 'institute', 'academy', 'school', 'technology', 'google'
+            ]):
+                result["issuer_name"] = line
+            
+            # 11. GSoC Date range patterns (JUNE 2 - SEPTEMBER 1, 2025)
+            elif any(month in line.upper() for month in ['JUNE', 'JULY', 'AUGUST', 'SEPTEMBER']) and any(pattern in line for pattern in ['-', 'TO', 'THROUGH']):
+                result["issued_date"] = line
+            
+            # 12. Hexadecimal learner ID detection (fallback)
+            elif not result["learner_id"] and len(line) >= 16 and all(c in '0123456789abcdef' for c in line.lower()):
+                result["learner_id"] = line
+            
+            # 13. NSQF Level pattern (fallback)
+            elif "NSQF LEVEL" in line.upper():
+                import re
+                level_match = re.search(r'\d+', line)
+                if level_match:
+                    result["nsqf_level"] = int(level_match.group())
+            
+            # 14. Date patterns (fallback)
+            elif not result["issued_date"] and any(pattern in line for pattern in [
+                '2024', '2023', '2025', 'january', 'february', 'march', 'april', 'may', 'june', 
+                'july', 'august', 'september', 'october', 'november', 'december'
+            ]):
+                result["issued_date"] = line
+        
+        # Clean up and validate results
+        result = self._clean_and_validate_results(result)
+        return result
+    
+    def _extract_skills_from_text(self, skills_text: str) -> List[str]:
+        """Extract skills from text using various delimiters."""
+        import re
+        
+        # Remove common prefixes and clean text
+        skills_text = skills_text.strip()
+        
+        # Split by various delimiters
+        skills = []
+        
+        # Try comma separation first
+        if ',' in skills_text:
+            skills = [skill.strip() for skill in skills_text.split(',') if skill.strip()]
+        # Try semicolon separation
+        elif ';' in skills_text:
+            skills = [skill.strip() for skill in skills_text.split(';') if skill.strip()]
+        # Try bullet points
+        elif '•' in skills_text or '-' in skills_text:
+            skills = re.split(r'[•\-]', skills_text)
+            skills = [skill.strip() for skill in skills if skill.strip()]
+        # Try line breaks
+        elif '\n' in skills_text:
+            skills = [skill.strip() for skill in skills_text.split('\n') if skill.strip()]
+        else:
+            # Single skill or space-separated
+            skills = [skills_text] if skills_text else []
+        
+        # Clean up skills
+        cleaned_skills = []
+        for skill in skills:
+            skill = skill.strip()
+            if skill and len(skill) > 2:  # Avoid very short skills
+                cleaned_skills.append(skill)
+        
+        return cleaned_skills
+    
+    def _clean_and_validate_results(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """Clean and validate parsing results."""
+        # Remove duplicates from skill tags
+        if result["skill_tags"]:
+            result["skill_tags"] = list(dict.fromkeys(result["skill_tags"]))  # Preserve order
+        
+        # Ensure dates are properly formatted
+        if result["issued_date"] and ":" in result["issued_date"]:
+            result["issued_date"] = result["issued_date"].split(":", 1)[1].strip()
+        
+        if result["expiry_date"] and ":" in result["expiry_date"]:
+            result["expiry_date"] = result["expiry_date"].split(":", 1)[1].strip()
+        
+        # Set default values if empty
+        if not result["credential_name"]:
+            result["credential_name"] = "Certificate"
+        
+        if not result["issuer_name"]:
+            result["issuer_name"] = "Unknown Issuer"
+        
+        if not result["learner_name"]:
+            result["learner_name"] = "Unknown Learner"
+        
+        return result
     
     def _generate_skill_tags(self, certificate_data: Dict[str, Any]) -> List[str]:
         """

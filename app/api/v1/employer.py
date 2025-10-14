@@ -667,27 +667,21 @@ async def extract_ocr_from_credential(
             logger.info(f"Starting OCR extraction for file: {file.filename}")
             
             # Simulate OCR extraction with the AWS certificate data structure
-            # In a real implementation, this would use actual OCR libraries
-            ocr_result = {
-                "success": True,
-                "learner_id": "68ec04e8f9a2d4d5bf6e7f2b",
-                "learner_name": "Ishaan Gupta",
-                "credential_title": "AWS SOLUTIONS ARCHITECT",
-                "issuer_name": "Amazon Web Services",
-                "issued_date": "2023-01-30",
-                "expiry_date": None,
-                "skills": ["AWS", "Solutions Architecture", "Cloud Architecture"],
-                "nsqf_level": 6,
-                "confidence_score": 0.95,
-                "raw_text": "Certificate ID: 68ec04e8f9a2d4d5bf6e7f2b\nAWS SOLUTIONS ARCHITECT\nIS AWARDED TO\nIshaan Gupta\nISSUED BY\nAmazon Web Services\nISSUED DATE\nJanuary 30, 2023\nNSQF LEVEL\n6",
-                "ocr_engine": "paddleocr",
-                "metadata": {
-                    "file_name": file.filename,
-                    "file_size": len(file_content),
-                    "processing_time": "2.5s",
-                    "confidence_threshold": 0.8
-                }
-            }
+            # Use real OCR service with enhanced context-aware parsing
+            from app.services.ocr_service import OCRService
+            ocr_service = OCRService()
+            
+            # Perform OCR extraction using the enhanced method for direct file content
+            ocr_result = await ocr_service.extract_certificate_data_from_content(file_content)
+            
+            if not ocr_result.get("success"):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"OCR extraction failed: {ocr_result.get('error', 'Unknown error')}"
+                )
+            
+            # Extract data from OCR result
+            ocr_data = ocr_result.get("extracted_data", {})
             
             if not ocr_result:
                 raise HTTPException(
@@ -695,23 +689,25 @@ async def extract_ocr_from_credential(
                     detail="Failed to extract data from PDF. Please ensure the PDF contains readable text."
                 )
             
-            # Parse and structure the extracted data
+            # Parse and structure the extracted data using enhanced context-aware parsing
             extracted_data = {
-                "learner_id": ocr_result.get("learner_id", ""),
-                "learner_name": ocr_result.get("learner_name", ""),
-                "credential_title": ocr_result.get("credential_title", ""),
-                "issuer_name": ocr_result.get("issuer_name", ""),
-                "issued_date": ocr_result.get("issued_date", ""),
-                "expiry_date": ocr_result.get("expiry_date", ""),
-                "skills": ocr_result.get("skills", []),
-                "nsqf_level": ocr_result.get("nsqf_level"),
-                "confidence_score": ocr_result.get("confidence_score", 0.0),
-                "raw_text": ocr_result.get("raw_text", ""),
+                "success": True,
+                "learner_id": ocr_data.get("learner_id", ""),
+                "learner_name": ocr_data.get("learner_name", ""),
+                "credential_name": ocr_data.get("credential_name", ""),
+                "issuer_name": ocr_data.get("issuer_name", ""),
+                "issued_date": ocr_data.get("issued_date", ""),
+                "expiry_date": ocr_data.get("expiry_date", ""),
+                "skill_tags": ocr_data.get("skill_tags", []),
+                "nsqf_level": ocr_data.get("nsqf_level"),
+                "confidence_score": ocr_result.get("confidence", 0.0),
+                "raw_text": ocr_data.get("raw_text", ""),
                 "extraction_metadata": {
                     "file_name": file.filename,
                     "file_size": len(file_content),
                     "extraction_timestamp": datetime.utcnow().isoformat(),
-                    "ocr_engine": ocr_result.get("ocr_engine", "unknown")
+                    "ocr_engine": ocr_result.get("provider", "unknown"),
+                    "parsing_method": "enhanced_context_aware"
                 }
             }
             
