@@ -13,7 +13,8 @@ from datetime import datetime
 import io
 from PIL import Image
 import fitz  # PyMuPDF
-import pyzbar.pyzbar as pyzbar
+import cv2
+import numpy as np
 from pydantic import BaseModel
 
 from ...services.blockchain_service import blockchain_service
