@@ -87,9 +87,17 @@ class IssuerService:
             
             # Check if role is already assigned
             existing_roles = user.get('roles', [])
-            if any(str(r.get('role_id', '')) == str(role_id) for r in existing_roles):
-                logger.info(f"User {user_id} already has Issuer role")
-                return True
+            if existing_roles:
+                for r in existing_roles:
+                    # Handle both dict and string formats
+                    if isinstance(r, dict):
+                        if str(r.get('role_id', '')) == str(role_id):
+                            logger.info(f"User {user_id} already has Issuer role")
+                            return True
+                    elif isinstance(r, str):
+                        if str(r) == str(role_id):
+                            logger.info(f"User {user_id} already has Issuer role")
+                            return True
             
             # Assign the role
             await rbac_service.assign_role_to_user(ObjectId(user_id), role_id)

@@ -1732,19 +1732,26 @@ async def get_verification_status(
         )
 
 
-@router.put(
+@router.post(
     "/verification/{user_id}/approve",
-    summary="Approve issuer verification (Admin only)",
+    summary="Approve issuer verification (Auto-approval or Admin)",
     description="Approve issuer verification and automatically grant permissions"
 )
 async def approve_issuer_verification(
     user_id: str,
-    current_user: UserInDB = Depends(get_current_superuser),
+    current_user: UserInDB = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """Approve issuer verification and automatically grant permissions."""
     try:
         issuer_service = IssuerService(db)
+        
+        # Allow user to approve their own verification or admin to approve any
+        if str(current_user.id) != user_id and not current_user.is_superuser:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only approve your own verification"
+            )
         
         # Update verification status to verified
         result = await db.issuer_verifications.update_one(
@@ -1771,7 +1778,7 @@ async def approve_issuer_verification(
         if not success:
             logger.warning(f"Failed to grant permissions to user {user_id} after verification approval")
         
-        logger.info(f"Issuer verification approved for user: {user_id} by admin: {current_user.email}")
+        logger.info(f"Issuer verification approved for user: {user_id}")
         
         return {
             "message": "Issuer verification approved successfully",
