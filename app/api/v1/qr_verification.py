@@ -5,11 +5,16 @@ Allows public verification of credentials via QR code scanning
 
 import base64
 import json
-from fastapi import APIRouter, HTTPException, status, Query, Request
+from fastapi import APIRouter, HTTPException, status, Query, Request, UploadFile, File, Body
 from fastapi.responses import HTMLResponse, JSONResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from typing import Optional, Dict, Any
 from datetime import datetime
+import io
+from PIL import Image
+import fitz  # PyMuPDF
+import pyzbar.pyzbar as pyzbar
+from pydantic import BaseModel
 
 from ...services.blockchain_service import blockchain_service
 from ...services.qr_service import QRCodeService
@@ -519,3 +524,177 @@ async def get_verification_status():
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat()
         }
+
+
+class PDFQRVerificationRequest(BaseModel):
+    file_data: str  # Base64 encoded file data
+    file_name: str
+
+
+@router.post(
+    "/qr/pdf",
+    summary="Verify QR code from PDF file",
+    description="Extract and verify QR code data from uploaded PDF file"
+)
+async def verify_pdf_qr(
+    request: PDFQRVerificationRequest,
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """
+    Extract and verify QR code from PDF file.
+    
+    This endpoint:
+    1. Converts base64 PDF data to file
+    2. Extracts QR codes from PDF pages
+    3. Parses QR code data
+    4. Returns credential information
+    """
+    try:
+        # Decode base64 file data
+        try:
+            file_data = base64.b64decode(request.file_data)
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid base64 file data: {str(e)}"
+            )
+        
+        # Open PDF
+        try:
+            pdf_document = fitz.open(stream=file_data, filetype="pdf")
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid PDF file: {str(e)}"
+            )
+        
+        qr_codes_found = []
+        
+        # Process each page
+        for page_num in range(pdf_document.page_count):
+            page = pdf_document[page_num]
+            
+            # Try multiple zoom levels for better QR detection
+            zoom_levels = [1, 2, 3, 4]
+            page_qr_codes = []
+            
+            for zoom in zoom_levels:
+                # Convert page to image
+                mat = fitz.Matrix(zoom, zoom)
+                pix = page.get_pixmap(matrix=mat)
+                img_data = pix.tobytes("png")
+                
+                # Convert to PIL Image
+                image = Image.open(io.BytesIO(img_data))
+                
+                # Detect QR codes
+                qr_codes = pyzbar.decode(image)
+                
+                logger.info(f"Page {page_num + 1}, Zoom {zoom}x: Found {len(qr_codes)} QR codes")
+                
+                if qr_codes:
+                    page_qr_codes.extend(qr_codes)
+            
+            # Use QR codes found at any zoom level
+            qr_codes = page_qr_codes
+            
+            for qr_code in qr_codes:
+                try:
+                    # Decode QR code data
+                    qr_data = qr_code.data.decode('utf-8')
+                    
+                    # Parse JSON data
+                    try:
+                        credential_data = json.loads(qr_data)
+                    except json.JSONDecodeError:
+                        # If not JSON, try to extract as credential ID
+                        credential_data = {
+                            "credential_id": qr_data,
+                            "credential_hash": qr_data,
+                        }
+                    
+                    qr_codes_found.append({
+                        "page": page_num + 1,
+                        "qr_data": credential_data,
+                        "confidence": qr_code.quality
+                    })
+                    
+                except Exception as e:
+                    logger.warning(f"Error processing QR code on page {page_num + 1}: {e}")
+                    continue
+        
+        pdf_document.close()
+        
+        if not qr_codes_found:
+            logger.warning(f"No QR codes found in PDF '{request.file_name}' after processing {pdf_document.page_count} pages")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No QR codes found in PDF"
+            )
+        
+        # Use the first QR code found (most likely the credential)
+        main_qr = qr_codes_found[0]["qr_data"]
+        
+        # Extract credential information
+        credential_id = main_qr.get("credential_id")
+        credential_hash = main_qr.get("credential_hash")
+        
+        if not credential_id and not credential_hash:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="QR code does not contain valid credential information"
+            )
+        
+        # Try to get credential details from database
+        credential_info = None
+        if credential_id:
+            try:
+                credential_doc = await db.credentials.find_one({
+                    "_id": credential_id
+                })
+                if credential_doc:
+                    credential_info = {
+                        "credential_id": str(credential_doc["_id"]),
+                        "credential_title": credential_doc.get("credential_title"),
+                        "learner_id": credential_doc.get("learner_id"),
+                        "learner_name": credential_doc.get("learner_name"),
+                        "issuer_name": credential_doc.get("issuer_name"),
+                        "issued_date": credential_doc.get("issued_date"),
+                        "expiry_date": credential_doc.get("expiry_date"),
+                        "blockchain_hash": credential_doc.get("blockchain_hash"),
+                    }
+            except Exception as e:
+                logger.warning(f"Error fetching credential from database: {e}")
+        
+        # If not found in database, use QR data
+        if not credential_info:
+            credential_info = {
+                "credential_id": credential_id or credential_hash,
+                "credential_hash": credential_hash,
+                "credential_title": main_qr.get("credential_title"),
+                "learner_id": main_qr.get("learner_id"),
+                "learner_name": main_qr.get("learner_name"),
+                "issuer_name": main_qr.get("issuer_name"),
+                "issued_date": main_qr.get("issued_date"),
+                "blockchain_hash": credential_hash,
+            }
+        
+        logger.info(f"QR code extracted from PDF: {request.file_name}")
+        
+        return {
+            "success": True,
+            "file_name": request.file_name,
+            "qr_codes_found": len(qr_codes_found),
+            "credential_info": credential_info,
+            "all_qr_codes": qr_codes_found,
+            "verification_timestamp": datetime.utcnow().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"PDF QR verification error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to verify PDF QR code: {str(e)}"
+        )
