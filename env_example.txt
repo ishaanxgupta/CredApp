@@ -1,0 +1,19 @@
+# Environment Variables for Credify Backend
+# Copy this file to .env and fill in your values
+
+# Database
+MONGODB_URL=mongodb://localhost:27017/credify
+
+# JWT
+SECRET_KEY=your-secret-key-here
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+
+# External Services
+# NSQF Recommendation Service URL from Google Colab
+# Example: https://abc123-8000.ngrok.io
+NSQF_RECOMMENDATION_API_URL=https://gaynell-unspendable-rolanda.ngrok-free.dev
+
+# Other configurations
+DEBUG=true
+LOG_LEVEL=INFO

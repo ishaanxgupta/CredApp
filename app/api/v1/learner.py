@@ -718,3 +718,75 @@ async def get_shared_profile(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve shared profile"
         )
+
+
+@router.get(
+    "/recommendations",
+    summary="Get course recommendations",
+    description="Get personalized NSQF course recommendations based on user profile"
+)
+async def get_course_recommendations(
+    limit: int = Query(10, ge=1, le=20, description="Maximum number of recommendations"),
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = DatabaseDep
+):
+    """
+    Get personalized course recommendations for the current user.
+    
+    Args:
+        limit: Maximum number of recommendations to return
+        current_user: The current authenticated user
+        db: Database connection
+        
+    Returns:
+        List of course recommendations
+        
+    Raises:
+        HTTPException: If recommendation retrieval fails
+    """
+    try:
+        from ...services.recommendation_service import RecommendationService
+        
+        recommendation_service = RecommendationService()
+        recommendations = await recommendation_service.get_recommendations(current_user, limit)
+        
+        logger.info(f"Generated {len(recommendations)} recommendations for user: {current_user.email}")
+        return {
+            "recommendations": recommendations,
+            "total_count": len(recommendations),
+            "user_id": str(current_user.id)
+        }
+        
+    except Exception as e:
+        logger.error(f"Get recommendations endpoint error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve course recommendations"
+        )
+
+
+@router.get(
+    "/recommendations/health",
+    summary="Check recommendation service health",
+    description="Check if the external recommendation service is healthy"
+)
+async def check_recommendation_service_health(
+    current_user: UserInDB = Depends(get_current_active_user)
+):
+    """
+    Check the health of the recommendation service.
+    
+    Returns:
+        Health status of the recommendation service
+    """
+    try:
+        from ...services.recommendation_service import RecommendationService
+        
+        recommendation_service = RecommendationService()
+        health_status = await recommendation_service.health_check()
+        
+        return health_status
+        
+    except Exception as e:
+        logger.error(f"Recommendation health check error: {e}")
+        return {"status": "error", "message": str(e)}

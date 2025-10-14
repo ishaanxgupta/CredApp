@@ -19,12 +19,10 @@ router = APIRouter(
     }
 )
 
-# Initialize the recommendation service (this will load the model and data on startup)
+# Initialize the recommendation service (connects to external API)
 try:
     recommendation_service = RecommendationService()
-except FileNotFoundError as e:
-    logger.error(f"Could not initialize RecommendationService: {e}")
-    recommendation_service = None
+    logger.info("RecommendationService initialized successfully")
 except Exception as e:
     logger.error(f"An unexpected error occurred during RecommendationService initialization: {e}")
     recommendation_service = None
@@ -52,7 +50,7 @@ async def get_course_recommendations(
         )
 
     try:
-        recommendations = recommendation_service.get_recommendations(user=current_user, limit=limit)
+        recommendations = await recommendation_service.get_recommendations(user=current_user, limit=limit)
         logger.info(f"Generated {len(recommendations)} recommendations for user {current_user.email}")
         return recommendations
     except Exception as e:
