@@ -29,7 +29,6 @@ from pydantic import BaseModel
 
 logger = get_logger("issuer_api")
 
-
 def serialize_mongodb_doc(doc: dict) -> dict:
     """
     Convert MongoDB document to JSON-serializable format.
