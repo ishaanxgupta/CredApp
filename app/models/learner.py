@@ -250,6 +250,8 @@ class ShareResponse(BaseModel):
     """Model for share response."""
     
     share_id: PyObjectId = Field(..., alias="_id")
+    user_id: str
+    share_token: str
     share_url: str
     qr_code_url: Optional[str] = None
     expires_at: Optional[datetime] = None
