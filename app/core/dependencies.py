@@ -157,6 +157,41 @@ async def get_current_superuser(
     return current_user
 
 
+async def get_current_verified_issuer(
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = DatabaseDep
+) -> UserInDB:
+    """
+    Get the current verified issuer.
+    
+    Args:
+        current_user: The current active user
+        db: Database connection
+        
+    Returns:
+        UserInDB: The verified issuer
+        
+    Raises:
+        HTTPException: If user is not a verified issuer
+    """
+    # Check if user is a verified issuer
+    verification = await db.issuer_verifications.find_one({"user_id": current_user.id})
+    
+    if not verification:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Issuer verification required. Please complete issuer verification first."
+        )
+    
+    if verification.get("status") != "verified":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Issuer verification status: {verification.get('status', 'pending')}. Only verified issuers can access blockchain features."
+        )
+    
+    return current_user
+
+
 async def get_optional_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
     db: AsyncIOMotorDatabase = DatabaseDep

@@ -19,8 +19,10 @@ from ..models.issuer import (
     WebhookEvent
 )
 from ..models.learner import BlockchainData, QRCodeData
+from ..models.rbac import PermissionType, RoleType
 from ..services.blockchain_service import blockchain_service
 from ..services.credential_issuance_service import CredentialIssuanceService
+from ..services.rbac_service import RBACService
 from ..utils.logger import get_logger
 
 logger = get_logger("issuer_service")
@@ -33,6 +35,71 @@ class IssuerService:
         self.db = db
         self.max_file_size = 100 * 1024 * 1024  # 100MB
         self.allowed_file_types = ['.zip', '.json', '.pdf']
+    
+    async def grant_issuer_permissions(self, user_id: str) -> bool:
+        """
+        Automatically grant issuer permissions when user gets verified as issuer.
+        
+        Args:
+            user_id: The user ID to grant permissions to
+            
+        Returns:
+            bool: True if permissions were granted successfully
+        """
+        try:
+            rbac_service = RBACService(self.db)
+            
+            # Define minimum issuer permissions
+            issuer_permissions = [
+                PermissionType.CREDENTIAL_CREATE,
+                PermissionType.CREDENTIAL_READ,
+                PermissionType.CREDENTIAL_UPDATE,
+                PermissionType.CREDENTIAL_VERIFY,
+                PermissionType.ISSUER_MANAGE,
+                PermissionType.API_KEY_MANAGE,
+            ]
+            
+            # Check if Issuer role exists, create if not
+            issuer_role = await self.db.roles.find_one({"role_name": RoleType.ISSUER.value})
+            
+            if not issuer_role:
+                logger.info("Creating Issuer role with minimum permissions")
+                issuer_role_data = {
+                    "role_name": RoleType.ISSUER.value,
+                    "role_type": RoleType.ISSUER.value,
+                    "permissions": [p.value for p in issuer_permissions],
+                    "is_active": True,
+                    "created_at": datetime.utcnow(),
+                    "updated_at": datetime.utcnow()
+                }
+                result = await self.db.roles.insert_one(issuer_role_data)
+                issuer_role = await self.db.roles.find_one({"_id": result.inserted_id})
+                logger.info(f"Created Issuer role with ID: {issuer_role['_id']}")
+            
+            # Assign the Issuer role to the user
+            role_id = issuer_role['_id']
+            
+            # Check if user already has this role
+            user = await self.db.users.find_one({"_id": ObjectId(user_id)})
+            if not user:
+                logger.error(f"User not found: {user_id}")
+                return False
+            
+            # Check if role is already assigned
+            existing_roles = user.get('roles', [])
+            if any(str(r.get('role_id', '')) == str(role_id) for r in existing_roles):
+                logger.info(f"User {user_id} already has Issuer role")
+                return True
+            
+            # Assign the role
+            await rbac_service.assign_role_to_user(ObjectId(user_id), role_id)
+            logger.info(f"Successfully granted Issuer permissions to user: {user_id}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to grant issuer permissions to user {user_id}: {e}")
+            return False
     
     async def submit_credential(
         self, 

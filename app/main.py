@@ -8,6 +8,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
 
 from .core.middleware import setup_middleware_stack
 from .db.mongo import connect_to_mongo, close_mongo_connection
@@ -90,6 +92,11 @@ app.include_router(verification_router)
 app.include_router(qr_verification_router)
 app.include_router(blockchain_credentials_router)
 app.include_router(did_management_router)
+
+# Mount static files for uploaded files
+uploads_dir = os.path.join(os.getcwd(), "uploads")
+os.makedirs(uploads_dir, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
 
 
 # Global exception handlers

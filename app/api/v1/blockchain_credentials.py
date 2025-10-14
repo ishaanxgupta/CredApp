@@ -7,11 +7,12 @@ from fastapi import APIRouter, Depends, HTTPException, status, Body, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from typing import Optional, Dict, Any, List
 from bson import ObjectId
+from datetime import datetime
 
 from ...services.credential_issuance_service import CredentialIssuanceService
 from ...services.blockchain_service import blockchain_service
 from ...services.qr_service import QRCodeService
-from ...core.dependencies import get_current_active_user, require_permission
+from ...core.dependencies import get_current_active_user, require_permission, get_current_verified_issuer
 from ...models.user import UserInDB
 from ...models.rbac import PermissionType
 from ...models.learner import BlockchainData, QRCodeData
@@ -43,7 +44,7 @@ async def issue_credential_with_blockchain(
     learner_address: Optional[str] = Body(None, description="Ethereum address of the learner"),
     generate_qr: bool = Body(True, description="Generate QR code for verification"),
     wait_for_confirmation: bool = Body(False, description="Wait for blockchain confirmation"),
-    current_user: UserInDB = Depends(require_permission(PermissionType.ISSUER_MANAGE)),
+    current_user: UserInDB = Depends(get_current_verified_issuer),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
@@ -102,7 +103,7 @@ async def batch_issue_credentials_with_blockchain(
     credential_ids: List[str] = Body(..., description="List of credential IDs to issue"),
     generate_qr: bool = Body(True, description="Generate QR codes for verification"),
     wait_for_confirmation: bool = Body(False, description="Wait for blockchain confirmation"),
-    current_user: UserInDB = Depends(require_permission(PermissionType.ISSUER_MANAGE)),
+    current_user: UserInDB = Depends(get_current_verified_issuer),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
@@ -161,7 +162,7 @@ async def batch_issue_credentials_with_blockchain(
 )
 async def get_credential_blockchain_info(
     credential_id: str,
-    current_user: UserInDB = Depends(require_permission(PermissionType.CREDENTIAL_VERIFY)),
+    current_user: UserInDB = Depends(get_current_verified_issuer),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
@@ -191,7 +192,7 @@ async def get_credential_blockchain_info(
 )
 async def get_complete_credential_info(
     credential_id: str,
-    current_user: UserInDB = Depends(require_permission(PermissionType.CREDENTIAL_VERIFY)),
+    current_user: UserInDB = Depends(get_current_verified_issuer),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
@@ -289,7 +290,7 @@ async def get_complete_credential_info(
 async def update_credential_blockchain_status(
     credential_id: str,
     transaction_hash: str = Body(..., description="Blockchain transaction hash"),
-    current_user: UserInDB = Depends(require_permission(PermissionType.ISSUER_MANAGE)),
+    current_user: UserInDB = Depends(get_current_verified_issuer),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
@@ -324,7 +325,7 @@ async def update_credential_blockchain_status(
 async def generate_credential_qr_code(
     credential_id: str,
     certificate_template: str = Body("standard", description="Certificate template type"),
-    current_user: UserInDB = Depends(require_permission(PermissionType.ISSUER_MANAGE)),
+    current_user: UserInDB = Depends(get_current_verified_issuer),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
@@ -388,7 +389,7 @@ async def generate_credential_qr_code(
 )
 async def get_credential_qr_code(
     credential_id: str,
-    current_user: UserInDB = Depends(require_permission(PermissionType.CREDENTIAL_READ)),
+    current_user: UserInDB = Depends(get_current_verified_issuer),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
@@ -433,7 +434,7 @@ async def get_credential_qr_code(
 )
 async def verify_credential_from_qr(
     qr_data: str = Body(..., description="QR code data (base64 encoded JSON)"),
-    current_user: UserInDB = Depends(require_permission(PermissionType.CREDENTIAL_VERIFY)),
+    current_user: UserInDB = Depends(get_current_verified_issuer),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
     """
@@ -463,7 +464,7 @@ async def verify_credential_from_qr(
     description="Get current blockchain network status and connectivity"
 )
 async def get_blockchain_network_status(
-    current_user: UserInDB = Depends(require_permission(PermissionType.CREDENTIAL_VERIFY))
+    current_user: UserInDB = Depends(get_current_verified_issuer)
 ):
     """
     Get blockchain network status and connectivity information.
@@ -489,7 +490,7 @@ async def get_blockchain_network_status(
 )
 async def verify_credential_on_blockchain(
     credential_hash: str,
-    current_user: UserInDB = Depends(require_permission(PermissionType.CREDENTIAL_VERIFY))
+    current_user: UserInDB = Depends(get_current_verified_issuer)
 ):
     """
     Verify a credential directly on the blockchain.
@@ -524,7 +525,7 @@ async def verify_credential_on_blockchain(
 )
 async def get_learner_blockchain_credentials(
     learner_address: str,
-    current_user: UserInDB = Depends(require_permission(PermissionType.CREDENTIAL_VERIFY))
+    current_user: UserInDB = Depends(get_current_verified_issuer)
 ):
     """
     Get all credentials for a learner from the blockchain.

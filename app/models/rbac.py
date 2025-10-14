@@ -62,6 +62,12 @@ class PermissionType(str, Enum):
     EMPLOYER_CREDENTIAL_VERIFY = "employer:credential_verify"
     EMPLOYER_DATA_EXPORT = "employer:data_export"
     EMPLOYER_NOTIFICATION_VIEW = "employer:notification_view"
+    
+    # Additional permissions
+    API_KEY_MANAGE = "api_key:manage"
+    BLOCKCHAIN_INTERACT = "blockchain:interact"
+    AUDIT_LOG_READ = "audit_log:read"
+    SETTINGS_MANAGE = "settings:manage"
 
 
 class RoleBase(BaseModel):
