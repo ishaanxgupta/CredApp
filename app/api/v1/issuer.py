@@ -2238,9 +2238,9 @@ async def extract_ocr_data(
         # Return extracted data
         extracted_data = {
             "success": True,
-            "credential_name": ocr_data.get("credential_title", ""),
+            "credential_name": ocr_data.get("credential_name", ""),
             "issuer_name": ocr_data.get("issuer_name", ""),
-            "issued_date": ocr_data.get("issue_date", ""),
+            "issued_date": ocr_data.get("issued_date", ""),
             "expiry_date": ocr_data.get("expiry_date", ""),
             "skill_tags": ocr_data.get("skill_tags", []),
             "description": ocr_data.get("description", ""),
@@ -2248,6 +2248,7 @@ async def extract_ocr_data(
             "credential_type": ocr_data.get("credential_type", "digital-certificate"),
             "tags": ocr_data.get("tags", []),
             "learner_id": ocr_data.get("learner_id", ""),
+            "learner_name": ocr_data.get("learner_name", ""),
             "confidence": ocr_result.get("confidence", 0.0),
             "raw_text": ocr_data.get("raw_text", ""),
             "filename": file.filename,
