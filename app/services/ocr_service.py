@@ -28,8 +28,8 @@ class OCRService:
         self.aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
         self.aws_region = os.getenv("AWS_REGION", "us-east-1")
         
-        # OCR provider priority - using modern OCR solutions
-        self.providers = ["doctr", "paddleocr", "google", "azure", "aws"]
+        # OCR provider priority - PaddleOCR first (most reliable), then cloud services
+        self.providers = ["paddleocr", "google", "azure", "aws"]
         
     async def extract_certificate_data(self, file_url: str) -> Dict[str, Any]:
         """
@@ -55,9 +55,7 @@ class OCRService:
                 try:
                     logger.info(f"Trying OCR provider: {provider}")
                     
-                    if provider == "doctr":
-                        result = await self._extract_with_doctr(file_content)
-                    elif provider == "paddleocr":
+                    if provider == "paddleocr":
                         result = await self._extract_with_paddleocr(file_content)
                     elif provider == "google" and self.google_vision_api_key:
                         result = await self._extract_with_google_vision(file_content)
@@ -122,9 +120,7 @@ class OCRService:
                 try:
                     logger.info(f"Trying OCR provider: {provider}")
                     
-                    if provider == "doctr":
-                        result = await self._extract_with_doctr(file_content)
-                    elif provider == "paddleocr":
+                    if provider == "paddleocr":
                         result = await self._extract_with_paddleocr(file_content)
                     elif provider == "google" and self.google_vision_api_key:
                         result = await self._extract_with_google_vision(file_content)
@@ -462,14 +458,14 @@ class OCRService:
                 "confidence": 0.0,
                 "error": "No OCR libraries available. Please install pytesseract or paddleocr.",
                 "extracted_data": {
-                    "credential_title": "",
-                    "issuer_name": "",
-                    "learner_name": "",
+                    "credential_name": "Certificate",
+                    "issuer_name": "Unknown Issuer",
+                    "learner_name": "Unknown Learner",
                     "learner_id": "",
-                    "issue_date": "",
+                    "issued_date": datetime.now().strftime("%Y-%m-%d"),
                     "expiry_date": "",
-                    "nsqf_level": None,
                     "skill_tags": [],
+                    "credential_type": "certificate",
                     "description": "OCR processing unavailable - manual input required",
                     "raw_text": ""
                 },
@@ -579,10 +575,62 @@ class OCRService:
                 
                 # Convert file content to image
                 if file_content.startswith(b'%PDF'):
-                    # Handle PDF files
-                    logger.info("Processing PDF file with PaddleOCR")
-                    # For PDF, we'll use a fallback method since PaddleOCR works better with images
-                    return await self._extract_with_tesseract_fallback(file_content)
+                    # Handle PDF files by converting to images
+                    logger.info("Processing PDF file with PaddleOCR - converting to images")
+                    import fitz  # PyMuPDF
+                    
+                    # Open PDF from bytes
+                    pdf_document = fitz.open(stream=file_content, filetype="pdf")
+                    
+                    # Process first page (most certificates are single page)
+                    page = pdf_document[0]
+                    
+                    # Convert page to image
+                    mat = fitz.Matrix(2.0, 2.0)  # 2x zoom for better quality
+                    pix = page.get_pixmap(matrix=mat)
+                    img_data = pix.tobytes("png")
+                    
+                    # Convert to PIL Image
+                    image = Image.open(io.BytesIO(img_data))
+                    image_array = np.array(image)
+                    
+                    pdf_document.close()
+                    
+                    # Perform OCR on the image
+                    result = ocr.ocr(image_array, cls=True)
+                    
+                    # Extract text from results
+                    extracted_text = ""
+                    confidence_scores = []
+                    
+                    if result and result[0]:
+                        for line in result[0]:
+                            if line and len(line) >= 2:
+                                text = line[1][0] if isinstance(line[1], (list, tuple)) else line[1]
+                                confidence = line[1][1] if isinstance(line[1], (list, tuple)) and len(line[1]) > 1 else 0.9
+                                extracted_text += text + "\n"
+                                confidence_scores.append(confidence)
+                    
+                    logger.info(f"PaddleOCR extracted text from PDF: {extracted_text[:200]}...")
+                    
+                    if not extracted_text.strip():
+                        raise Exception("No text detected by PaddleOCR from PDF")
+                    
+                    # Parse certificate data from extracted text
+                    extracted_data = self._parse_certificate_text(extracted_text)
+                    
+                    return {
+                        "success": True,
+                        "provider": "paddleocr",
+                        "confidence": sum(confidence_scores) / len(confidence_scores) if confidence_scores else 0.8,
+                        "extracted_data": extracted_data,
+                        "metadata": {
+                            "processing_time": 0.5,
+                            "file_size": len(file_content),
+                            "parsing_method": "paddleocr_pdf_conversion",
+                            "model": "paddleocr"
+                        }
+                    }
                 else:
                     # Handle image files
                     image = Image.open(io.BytesIO(file_content))
@@ -633,13 +681,15 @@ class OCRService:
                         }
                     }
                     
-            except ImportError:
-                logger.warning("PaddleOCR not installed, falling back to Tesseract")
-                return await self._extract_with_tesseract_fallback(file_content)
+            except ImportError as e:
+                logger.warning(f"PaddleOCR import error: {e}")
+                logger.warning("PaddleOCR dependencies not available, using basic fallback")
+                return await self._extract_with_basic_fallback(file_content)
             
         except Exception as e:
-            logger.error(f"PaddleOCR error: {e}")
-            return await self._extract_with_tesseract_fallback(file_content)
+            logger.error(f"PaddleOCR processing error: {e}")
+            logger.warning("Falling back to basic fallback due to PaddleOCR error")
+            return await self._extract_with_basic_fallback(file_content)
     
     def _is_learner_id(self, text: str) -> bool:
         """
@@ -792,45 +842,96 @@ class OCRService:
             if not line:
                 continue
             
-            # 1. CREDENTIAL NAME - Context cues from your specification
+            # 1. CREDENTIAL NAME - Enhanced context cues
             if any(phrase in line.upper() for phrase in [
                 "THIS IS TO CERTIFY THAT",
                 "HAS SUCCESSFULLY COMPLETED THE COURSE",
                 "HAS BEEN AWARDED THE CERTIFICATE IN",
-                "FOR SUCCESSFULLY COMPLETING THE COURSE"
+                "FOR SUCCESSFULLY COMPLETING THE COURSE",
+                "CERTIFICATE OF COMPLETION",
+                "CERTIFICATE IN",
+                "COURSE:",
+                "PROGRAM:"
             ]):
-                # Look for the credential name in the next few lines
-                for j in range(i+1, min(i+4, len(lines))):
-                    next_line = lines[j].strip()
-                    if next_line and len(next_line) > 5:
-                        # More specific keyword blocking - avoid common certificate metadata but allow course names
-                        blocked_patterns = [
-                            'NSQF LEVEL', 'ISSUED DATE', 'JULY - OCT', 'WEEK COURSE',
-                            'FUNDED BY', 'SKILL INDIA', 'FREE ONLINE'
-                        ]
-                        is_blocked = any(pattern in next_line.upper() for pattern in blocked_patterns)
-                        
-                        # Also block if it starts with common metadata keywords
-                        starts_with_blocked = next_line.upper().startswith(('NSQF', 'ISSUED', 'DATE:', 'JULY', 'WEEK'))
-                        
-                        if not is_blocked and not starts_with_blocked:
-                            result["credential_name"] = next_line
-                            break
+                # Look for the credential name in the current line or next few lines
+                credential_name = ""
+                
+                # First, try to extract from current line
+                if "COURSE:" in line.upper():
+                    parts = line.split(":", 1)
+                    if len(parts) > 1:
+                        credential_name = parts[1].strip()
+                elif "PROGRAM:" in line.upper():
+                    parts = line.split(":", 1)
+                    if len(parts) > 1:
+                        credential_name = parts[1].strip()
+                elif "CERTIFICATE IN" in line.upper():
+                    parts = line.split("CERTIFICATE IN", 1)
+                    if len(parts) > 1:
+                        credential_name = parts[1].strip()
+                
+                # If not found in current line, look in next few lines
+                if not credential_name:
+                    for j in range(i+1, min(i+4, len(lines))):
+                        next_line = lines[j].strip()
+                        if next_line and len(next_line) > 5:
+                            # More specific keyword blocking - avoid common certificate metadata but allow course names
+                            blocked_patterns = [
+                                'NSQF LEVEL', 'ISSUED DATE', 'JULY - OCT', 'WEEK COURSE',
+                                'FUNDED BY', 'SKILL INDIA', 'FREE ONLINE', 'LEARNER ID',
+                                'STUDENT ID', 'ENROLLMENT ID', 'CANDIDATE ID'
+                            ]
+                            is_blocked = any(pattern in next_line.upper() for pattern in blocked_patterns)
+                            
+                            # Also block if it starts with common metadata keywords
+                            starts_with_blocked = next_line.upper().startswith(('NSQF', 'ISSUED', 'DATE:', 'JULY', 'WEEK', 'LEARNER', 'STUDENT'))
+                            
+                            if not is_blocked and not starts_with_blocked:
+                                credential_name = next_line
+                                break
+                
+                if credential_name:
+                    result["credential_name"] = credential_name
             
-            # 2. LEARNER ID - Context cues from your specification
+            # 2. LEARNER ID - Enhanced extraction patterns
             elif any(pattern in line.upper() for pattern in [
                 "LEARNER ID:", "STUDENT ID:", "ENROLLMENT ID:", 
-                "CANDIDATE ID:", "ROLL NO:", "CERTIFICATE ID:"
+                "CANDIDATE ID:", "ROLL NO:", "CERTIFICATE ID:",
+                "ID:", "LEARNER:", "STUDENT:"
             ]):
                 # Extract ID from the line
-                for pattern in ["LEARNER ID:", "STUDENT ID:", "ENROLLMENT ID:", "CANDIDATE ID:", "ROLL NO:", "CERTIFICATE ID:"]:
+                learner_id = ""
+                for pattern in ["LEARNER ID:", "STUDENT ID:", "ENROLLMENT ID:", "CANDIDATE ID:", "ROLL NO:", "CERTIFICATE ID:", "ID:", "LEARNER:", "STUDENT:"]:
                     if pattern in line.upper():
                         parts = line.upper().split(pattern, 1)
                         if len(parts) > 1:
                             id_part = parts[1].strip().lstrip(':').strip()
                             if id_part and self._is_learner_id(id_part):
-                                result["learner_id"] = id_part
-                        break
+                                learner_id = id_part
+                                break
+                
+                # If not found with patterns, try to find any ID-like string in the line
+                if not learner_id:
+                    import re
+                    # Look for MongoDB ObjectId pattern (24 hex characters)
+                    mongo_id_pattern = r'\b[0-9a-fA-F]{24}\b'
+                    mongo_match = re.search(mongo_id_pattern, line)
+                    if mongo_match:
+                        learner_id = mongo_match.group()
+                    else:
+                        # Look for other ID patterns
+                        id_patterns = [
+                            r'\b[A-Z0-9]{8,}\b',  # 8+ alphanumeric characters
+                            r'\b\d{8,}\b',        # 8+ digits
+                        ]
+                        for pattern in id_patterns:
+                            match = re.search(pattern, line)
+                            if match:
+                                learner_id = match.group()
+                                break
+                
+                if learner_id:
+                    result["learner_id"] = learner_id
             
             # 3. ISSUER NAME - Context cues from your specification
             elif any(phrase in line.upper() for phrase in [
@@ -846,17 +947,23 @@ class OCRService:
                 ]):
                     result["issuer_name"] = issuer
             
-            # 4. ISSUED DATE - Context cues from your specification
+            # 4. ISSUED DATE - Enhanced date parsing
             elif any(phrase in line.upper() for phrase in [
-                "DATE OF ISSUE", "ISSUED ON", "DATE:", "DATED:"
+                "DATE OF ISSUE", "ISSUED ON", "DATE:", "DATED:", "ISSUED DATE:",
+                "COMPLETION DATE", "AWARDED ON", "CERTIFICATE DATE"
             ]):
                 date = line
-                for phrase in ["DATE OF ISSUE", "ISSUED ON", "DATE:", "DATED:"]:
+                for phrase in ["DATE OF ISSUE", "ISSUED ON", "DATE:", "DATED:", "ISSUED DATE:", "COMPLETION DATE", "AWARDED ON", "CERTIFICATE DATE"]:
                     if phrase in line.upper():
                         date = line.replace(phrase, "").strip().lstrip(':').strip()
                         break
+                
+                # Enhanced date parsing
                 if date and any(char.isdigit() for char in date):
-                    result["issued_date"] = date
+                    # Try to normalize the date format
+                    normalized_date = self._normalize_date(date)
+                    if normalized_date:
+                        result["issued_date"] = normalized_date
             
             # 5. EXPIRY DATE - Context cues from your specification
             elif any(phrase in line.upper() for phrase in [
@@ -892,17 +999,36 @@ class OCRService:
                     skills = self._extract_skills_from_text(skills_text)
                     result["skill_tags"].extend(skills)
             
-            # 7. LEARNER NAME - Look for "awarded to" and "certify that" patterns
+            # 7. LEARNER NAME - Enhanced extraction patterns
             elif any(phrase in line.upper() for phrase in [
-                "AWARDED TO", "CERTIFICATE IS AWARDED TO", "IS AWARDED TO", "THIS IS TO CERTIFY THAT"
+                "AWARDED TO", "CERTIFICATE IS AWARDED TO", "IS AWARDED TO", "THIS IS TO CERTIFY THAT",
+                "CERTIFICATE OF COMPLETION FOR", "PRESENTED TO", "GRANTED TO", "ISSUED TO"
             ]):
-                # Next line usually contains the learner name
-                if i + 1 < len(lines):
+                # Extract learner name from current line or next line
+                learner_name = ""
+                
+                # First, try to extract from current line
+                for phrase in ["AWARDED TO", "CERTIFICATE IS AWARDED TO", "IS AWARDED TO", "THIS IS TO CERTIFY THAT", 
+                              "CERTIFICATE OF COMPLETION FOR", "PRESENTED TO", "GRANTED TO", "ISSUED TO"]:
+                    if phrase in line.upper():
+                        parts = line.split(phrase, 1)
+                        if len(parts) > 1:
+                            learner_name = parts[1].strip()
+                            # Clean up common suffixes
+                            learner_name = learner_name.split(" FOR ")[0].split(" HAS ")[0].split(" SUCCESSFULLY ")[0].strip()
+                            break
+                
+                # If not found in current line, look in next line
+                if not learner_name and i + 1 < len(lines):
                     next_line = lines[i + 1].strip()
                     if next_line and not any(keyword in next_line.upper() for keyword in [
-                        'FOR SUCCESSFULLY', 'NSQF', 'LEVEL', 'ISSUED', 'DATE', 'BY', 'HAS COMPLETED', 'CONTRIBUTING'
+                        'FOR SUCCESSFULLY', 'NSQF', 'LEVEL', 'ISSUED', 'DATE', 'BY', 'HAS COMPLETED', 'CONTRIBUTING',
+                        'COURSE', 'PROGRAM', 'CERTIFICATE', 'COMPLETION'
                     ]):
-                        result["learner_name"] = next_line
+                        learner_name = next_line
+                
+                if learner_name and len(learner_name) > 2:
+                    result["learner_name"] = learner_name
             
             # 8. Google Summer of Code specific patterns
             elif "HAS COMPLETED" in line.upper() and "GOOGLE SUMMER OF CODE" in line.upper():
@@ -1086,3 +1212,77 @@ class OCRService:
         except Exception as e:
             logger.error(f"Skill tag generation error: {e}")
             return ["Professional Certification"]
+    
+    def _normalize_date(self, date_str: str) -> str:
+        """
+        Normalize date string to a standard format.
+        
+        Args:
+            date_str: Raw date string from OCR
+            
+        Returns:
+            Normalized date string in YYYY-MM-DD format or original string if parsing fails
+        """
+        try:
+            import re
+            from datetime import datetime
+            
+            # Clean the date string
+            date_str = date_str.strip()
+            
+            # Common date patterns
+            patterns = [
+                r'(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})',  # DD/MM/YYYY or DD-MM-YYYY
+                r'(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})',  # YYYY/MM/DD or YYYY-MM-DD
+                r'(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})',  # DD MMM YYYY
+                r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2}),?\s+(\d{4})',  # MMM DD, YYYY
+                r'(\d{1,2})[th|st|nd|rd]?\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})',  # DDth MMM YYYY
+            ]
+            
+            month_map = {
+                'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04', 'may': '05', 'jun': '06',
+                'jul': '07', 'aug': '08', 'sep': '09', 'oct': '10', 'nov': '11', 'dec': '12'
+            }
+            
+            for pattern in patterns:
+                match = re.search(pattern, date_str, re.IGNORECASE)
+                if match:
+                    groups = match.groups()
+                    
+                    if len(groups) == 3:
+                        if groups[1].lower() in month_map:  # Month name pattern
+                            day, month, year = groups[0], month_map[groups[1].lower()], groups[2]
+                            return f"{year}-{month}-{day.zfill(2)}"
+                        elif groups[0].lower() in month_map:  # Month first pattern
+                            month, day, year = month_map[groups[0].lower()], groups[1], groups[2]
+                            return f"{year}-{month}-{day.zfill(2)}"
+                        else:  # Numeric pattern
+                            if len(groups[0]) == 4:  # YYYY-MM-DD
+                                year, month, day = groups[0], groups[1], groups[2]
+                            else:  # DD-MM-YYYY
+                                day, month, year = groups[0], groups[1], groups[2]
+                            return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+            
+            # If no pattern matches, try to parse with datetime
+            try:
+                # Try common formats
+                formats = [
+                    '%Y-%m-%d', '%d-%m-%Y', '%m/%d/%Y', '%d/%m/%Y',
+                    '%Y/%m/%d', '%d.%m.%Y', '%Y.%m.%d'
+                ]
+                
+                for fmt in formats:
+                    try:
+                        parsed_date = datetime.strptime(date_str, fmt)
+                        return parsed_date.strftime('%Y-%m-%d')
+                    except ValueError:
+                        continue
+            except:
+                pass
+            
+            # If all else fails, return original string
+            return date_str
+            
+        except Exception as e:
+            logger.warning(f"Date normalization failed for '{date_str}': {e}")
+            return date_str
