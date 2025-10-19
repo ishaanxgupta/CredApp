@@ -15,6 +15,7 @@ from PIL import Image
 import fitz  # PyMuPDF
 import cv2
 import numpy as np
+from pyzbar import pyzbar
 from pydantic import BaseModel
 
 from ...services.blockchain_service import blockchain_service

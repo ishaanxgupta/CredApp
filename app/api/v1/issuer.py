@@ -66,12 +66,24 @@ def serialize_mongodb_doc(doc: dict) -> dict:
 async def auto_verify_issuer_after_delay(user_id: str, db: AsyncIOMotorDatabase):
     """Automatically verify issuer after 10 seconds and grant permissions."""
     try:
+        logger.info(f"Starting auto-verification process for user: {user_id}")
+        
         # Wait for 10 seconds
         await asyncio.sleep(10)
         
+        # Check if verification request still exists and is pending
+        verification = await db.issuer_verifications.find_one({"user_id": ObjectId(user_id)})
+        if not verification:
+            logger.warning(f"Verification request not found for user: {user_id}")
+            return
+        
+        if verification.get("status") != "pending":
+            logger.info(f"Verification status is no longer pending for user: {user_id}, current status: {verification.get('status')}")
+            return
+        
         # Update verification status to verified
-        await db.issuer_verifications.update_one(
-            {"user_id": ObjectId(user_id)},
+        result = await db.issuer_verifications.update_one(
+            {"user_id": ObjectId(user_id), "status": "pending"},
             {
                 "$set": {
                     "status": "verified",
@@ -81,6 +93,10 @@ async def auto_verify_issuer_after_delay(user_id: str, db: AsyncIOMotorDatabase)
                 }
             }
         )
+        
+        if result.matched_count == 0:
+            logger.warning(f"No pending verification found to update for user: {user_id}")
+            return
         
         # Update user's verification status
         await db.users.update_one(
@@ -98,7 +114,7 @@ async def auto_verify_issuer_after_delay(user_id: str, db: AsyncIOMotorDatabase)
         success = await issuer_service.grant_issuer_permissions(user_id)
         
         if success:
-            logger.info(f"Auto-verification completed for user: {user_id}")
+            logger.info(f"Auto-verification completed successfully for user: {user_id}")
         else:
             logger.warning(f"Auto-verification completed but failed to grant permissions for user: {user_id}")
             
@@ -734,11 +750,14 @@ async def submit_verification(
             # Insert new request
             await db.issuer_verifications.insert_one(verification_doc)
         
-        # Start auto-verification process (only for new submissions)
-        if not existing:
+        # Start auto-verification process (for new submissions or if status is pending)
+        should_start_auto_verification = not existing or existing.get("status") == "pending"
+        
+        if should_start_auto_verification:
             # Use asyncio.create_task to run in background
             try:
                 asyncio.create_task(auto_verify_issuer_after_delay(str(current_user.id), db))
+                logger.info(f"Auto-verification task started for user: {current_user.id}")
             except Exception as e:
                 logger.error(f"Failed to start auto-verification task: {e}")
         
@@ -746,7 +765,9 @@ async def submit_verification(
         
         return {
             "message": "Verification request submitted successfully. Auto-verification will complete in 10 seconds.",
-            "status": "pending"
+            "status": "pending",
+            "auto_verification_started": should_start_auto_verification,
+            "estimated_completion": "10 seconds from now"
         }
         
     except Exception as e:
@@ -1709,20 +1730,52 @@ async def get_verification_status(
     current_user: UserInDB = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = DatabaseDep
 ):
-    """Get issuer verification status."""
+    """Get issuer verification status with detailed information."""
     try:
         verification = await db.issuer_verifications.find_one({"user_id": current_user.id})
         
         if not verification:
-            return {"status": "not_submitted"}
+            return {
+                "status": "not_submitted",
+                "message": "No verification request found",
+                "can_submit": True,
+                "auto_verification_available": True,
+                "estimated_verification_time": "10 seconds"
+            }
         
-        return {
-            "status": verification.get("status", "not_submitted"),
-            "submitted_at": verification.get("submitted_at"),
-            "verified_at": verification.get("verified_at"),
+        status = verification.get("status", "unknown")
+        submitted_at = verification.get("submitted_at")
+        verified_at = verification.get("verified_at")
+        
+        # Calculate time since submission if still pending
+        time_since_submission = None
+        if status == "pending" and submitted_at:
+            time_since_submission = (datetime.utcnow() - submitted_at).total_seconds()
+        
+        response = {
+            "status": status,
+            "submitted_at": submitted_at,
+            "verified_at": verified_at,
+            "verified_by": verification.get("verified_by"),
             "rejected_at": verification.get("rejected_at"),
-            "rejection_reason": verification.get("rejection_reason")
+            "rejection_reason": verification.get("rejection_reason"),
+            "can_generate_api_key": status == "verified",
+            "can_submit_credentials": status == "verified",
+            "auto_verification_enabled": True
         }
+        
+        # Add time-based information for pending verifications
+        if status == "pending":
+            if time_since_submission is not None:
+                if time_since_submission < 10:
+                    remaining_time = 10 - time_since_submission
+                    response["estimated_completion"] = f"{remaining_time:.1f} seconds remaining"
+                else:
+                    response["estimated_completion"] = "Should be completed soon"
+            else:
+                response["estimated_completion"] = "Verification in progress"
+        
+        return response
         
     except Exception as e:
         logger.error(f"Get verification status endpoint error: {e}")
@@ -2235,31 +2288,38 @@ async def extract_ocr_data(
         # Extract data from OCR result
         ocr_data = ocr_result.get("extracted_data", {})
         
-        # Return extracted data
-        extracted_data = {
+        # Return extracted data in the correct format expected by frontend
+        response_data = {
             "success": True,
-            "credential_name": ocr_data.get("credential_name", ""),
-            "issuer_name": ocr_data.get("issuer_name", ""),
-            "issued_date": ocr_data.get("issued_date", ""),
-            "expiry_date": ocr_data.get("expiry_date", ""),
-            "skill_tags": ocr_data.get("skill_tags", []),
-            "description": ocr_data.get("description", ""),
-            "nsqf_level": ocr_data.get("nsqf_level", 6),
-            "credential_type": ocr_data.get("credential_type", "digital-certificate"),
-            "tags": ocr_data.get("tags", []),
-            "learner_id": ocr_data.get("learner_id", ""),
-            "learner_name": ocr_data.get("learner_name", ""),
+            "provider": ocr_result.get("provider", "paddleocr"),
             "confidence": ocr_result.get("confidence", 0.0),
-            "raw_text": ocr_data.get("raw_text", ""),
-            "filename": file.filename,
-            "file_size": len(file_content),
-            "file_type": file.content_type
+            "extracted_data": {
+                "credential_name": ocr_data.get("credential_name", ""),
+                "issuer_name": ocr_data.get("issuer_name", ""),
+                "issued_date": ocr_data.get("issued_date", ""),
+                "expiry_date": ocr_data.get("expiry_date", ""),
+                "skill_tags": ocr_data.get("skill_tags", []),
+                "description": ocr_data.get("description", ""),
+                "nsqf_level": ocr_data.get("nsqf_level", 6),
+                "credential_type": ocr_data.get("credential_type", "digital-certificate"),
+                "tags": ocr_data.get("tags", []),
+                "learner_id": ocr_data.get("learner_id", ""),
+                "learner_name": ocr_data.get("learner_name", ""),
+                "raw_text": ocr_data.get("raw_text", "")
+            },
+            "metadata": {
+                "processing_time": ocr_result.get("metadata", {}).get("processing_time", 0),
+                "file_size": len(file_content),
+                "filename": file.filename,
+                "file_type": file.content_type,
+                "model": ocr_result.get("metadata", {}).get("model", "paddleocr")
+            }
         }
         
         logger.info(f"OCR extraction completed for file: {file.filename}")
-        logger.info(f"Extracted data being returned: {extracted_data}")
+        logger.info(f"Extracted data being returned: {response_data}")
         
-        return extracted_data
+        return response_data
         
     except HTTPException:
         raise

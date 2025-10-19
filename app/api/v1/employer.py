@@ -790,17 +790,21 @@ async def get_credential_by_id(
                 detail=f"Credential not found with ID: {credential_id}. Available credential IDs: {available_ids[:3]}..."
             )
         
-        # Extract relevant credential information
+        # Extract relevant credential information from vc_payload structure
+        vc_payload = credential.get("vc_payload", {})
+        credential_subject = vc_payload.get("credentialSubject", {})
+        issuer_info = vc_payload.get("issuer", {})
+        
         credential_data = {
             "credential_id": str(credential["_id"]),
-            "learner_id": str(credential.get("learner_id", "")),
-            "learner_name": credential.get("vc_payload", {}).get("credentialSubject", {}).get("name"),
-            "credential_title": credential.get("vc_payload", {}).get("credentialSubject", {}).get("achievement"),
-            "issuer_name": credential.get("vc_payload", {}).get("issuer", {}).get("name"),
-            "issued_date": credential.get("vc_payload", {}).get("credentialSubject", {}).get("completion_date"),
-            "expiry_date": credential.get("vc_payload", {}).get("expirationDate"),
-            "skill_tags": credential.get("vc_payload", {}).get("credentialSubject", {}).get("skills", []),
-            "nsqf_level": credential.get("vc_payload", {}).get("credentialSubject", {}).get("nsqf_level"),
+            "learner_id": str(credential_subject.get("id", credential.get("learner_id", ""))),
+            "learner_name": credential_subject.get("name", ""),
+            "credential_title": credential_subject.get("achievement", credential_subject.get("course", "")),
+            "issuer_name": issuer_info.get("name", ""),
+            "issued_date": credential_subject.get("completion_date", vc_payload.get("issuanceDate", "")),
+            "expiry_date": vc_payload.get("expirationDate"),
+            "skill_tags": credential_subject.get("skills", []),
+            "nsqf_level": credential_subject.get("nsqf_level"),
             "credential_hash": credential.get("blockchain_data", {}).get("credential_hash"),
             "status": credential.get("status"),
             "created_at": credential.get("created_at"),
