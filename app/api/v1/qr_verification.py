@@ -15,7 +15,11 @@ from PIL import Image
 import fitz  # PyMuPDF
 import cv2
 import numpy as np
-from pyzbar import pyzbar
+try:
+    from pyzbar import pyzbar
+    PYZBAR_AVAILABLE = True
+except (ImportError, OSError, FileNotFoundError):
+    PYZBAR_AVAILABLE = False
 from pydantic import BaseModel
 
 from ...services.blockchain_service import blockchain_service
@@ -34,6 +38,48 @@ router = APIRouter(
         500: {"description": "Internal Server Error"}
     }
 )
+
+
+def decode_qr_codes(image: Image.Image):
+    """
+    Decode QR codes from an image using pyzbar or OpenCV as fallback
+    
+    Args:
+        image: PIL Image object
+        
+    Returns:
+        List of decoded QR code objects
+    """
+    if PYZBAR_AVAILABLE:
+        # Use pyzbar (faster and more reliable)
+        return pyzbar.decode(image)
+    else:
+        # Use OpenCV QRCodeDetector as fallback
+        logger.info("Using OpenCV QRCodeDetector (pyzbar not available)")
+        
+        # Convert PIL Image to OpenCV format
+        img_array = np.array(image)
+        if len(img_array.shape) == 3:
+            # Convert RGB to BGR for OpenCV
+            img_cv = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+        else:
+            img_cv = img_array
+            
+        # Detect and decode QR codes
+        detector = cv2.QRCodeDetector()
+        data, vertices_array, _ = detector.detectAndDecode(img_cv)
+        
+        # Return in pyzbar-like format for compatibility
+        class QRCode:
+            def __init__(self, data):
+                self.data = data.encode('utf-8') if data else b''
+                self.type = 'QRCODE'
+                
+        if data:
+            return [QRCode(data)]
+        else:
+            return []
+
 
 
 @router.get(
@@ -590,7 +636,7 @@ async def verify_pdf_qr(
                 image = Image.open(io.BytesIO(img_data))
                 
                 # Detect QR codes
-                qr_codes = pyzbar.decode(image)
+                qr_codes = decode_qr_codes(image)
                 
                 logger.info(f"Page {page_num + 1}, Zoom {zoom}x: Found {len(qr_codes)} QR codes")
                 
