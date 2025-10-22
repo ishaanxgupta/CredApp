@@ -2,8 +2,8 @@
 
 > A blockchain-powered credential management system enabling secure, verifiable, and tamper-proof digital credentials for educational institutions, employers, and learners.
 
-[![Frontend](https://img.shields.io/badge/Frontend-Vercel-black?logo=vercel)](https://vercel.com)
-[![Backend](https://img.shields.io/badge/Backend-AWS_EC2-FF9900?logo=amazon-aws)](https://aws.amazon.com)
+[![Frontend](https://img.shields.io/badge/Frontend-Vercel-black?logo=vercel)](https://cred-app-pearl.vercel.app/landing)
+[![Backend](https://img.shields.io/badge/Backend-AWS_EC2-FF9900?logo=amazon-aws)](https://credhub.twilightparadox.com/)
 [![Blockchain](https://img.shields.io/badge/Blockchain-Polygon_Amoy-8247E5?logo=polygon)](https://polygon.technology)
 
 ---
@@ -14,11 +14,11 @@
 
 ### 🔗 Platform Access
 
-- **Frontend**: Hosted on **Vercel** - [Frontend Repository](#)
-- **Backend API**: Deployed on **AWS EC2** - [Backend Repository](#)
-- **Blockchain Network**: **Polygon Amoy Testnet** - [Blockchain Repository](#)
-- **API Documentation**: Available at `/docs`
-- **Issuer API Docs**: Available at `/dashboard/issuer/api-docs`
+- **Frontend**: Hosted on **Vercel** - [Frontend Repository](https://credhub.twilightparadox.com/)
+- **Backend API**: Deployed on **AWS EC2** - [Backend Repository](https://github.com/ishaanxgupta/CredApp/)
+- **Blockchain Network**: **Polygon Amoy Testnet** - [Blockchain Repository](https://github.com/Vivekgupta008/CredApp-blockchain)
+- **API Documentation**: Available at https://credhub.twilightparadox.com/docs
+- **Issuer API Docs**: Available at https://cred-app-pearl.vercel.app/dashboard/issuer/api-docs
 
 ---
 
@@ -194,19 +194,19 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                     Frontend (Next.js)                      │
 │                    Hosted on Vercel                         │
-│  ┌────────────┬────────────┬────────────┬────────────┐    │
-│  │  Learner   │  Employer  │  Issuer    │   Admin    │    │
-│  │  Dashboard │  Dashboard │  Dashboard │  Dashboard │    │
-│  └────────────┴────────────┴────────────┴────────────┘    │
+│  ┌────────────┬────────────┬────────────┬────────────┐      │
+│  │  Learner   │  Employer  │  Issuer    │   Admin    │      │
+│  │  Dashboard │  Dashboard │  Dashboard │  Dashboard │      │
+│  └────────────┴────────────┴────────────┴────────────┘      │
 └────────────────────────┬────────────────────────────────────┘
                          │ HTTPS/REST API
 ┌────────────────────────▼────────────────────────────────────┐
 │                  Backend API (FastAPI)                      │
 │                   Hosted on AWS EC2                         │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  Authentication │ RBAC │ DID Service │ Blockchain   │  │
-│  │  OCR Service    │ QR   │ PDF Gen     │ Verification │  │
-│  └──────────────────────────────────────────────────────┘  │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  Authentication │ RBAC │ DID Service │ Blockchain    │   │
+│  │  OCR Service    │ QR   │ PDF Gen     │ Verification  │   │
+│  └──────────────────────────────────────────────────────┘   │
 └────────────┬──────────────────────────┬─────────────────────┘
              │                          │
     ┌────────▼────────┐        ┌────────▼────────────┐
@@ -461,9 +461,8 @@ Institution tracks NSQF compliance → Automated reporting → Credential mappin
 ### Documentation Resources
 - **API Documentation**: `/docs` (Swagger UI)
 - **Issuer API Guide**: `/dashboard/issuer/api-docs`
-- **Developer Portal**: [Link to dev portal]
 - **User Guides**: Available in platform
-- **Video Tutorials**: [Link to video library]
+- **Video Tutorials**: [https://youtu.be/MovdTUVLVlg]
 
 ### Getting Started
 1. **For Issuers**: Register institution → Complete KYC → Create credential templates → Start issuing
@@ -474,25 +473,9 @@ Institution tracks NSQF compliance → Automated reporting → Credential mappin
 ---
 
 
-## 📄 License
-
-[Your License Type] - All rights reserved
-
----
-
 ## 🤝 Contributing
 
-We welcome contributions from the community. Please see our contributing guidelines for more information.
-
----
-
-## 📧 Contact
-
-For business inquiries, partnerships, or support:
-- **Email**: [your-email@credapp.com]
-- **Website**: [https://credapp.com]
-- **LinkedIn**: [Company LinkedIn]
-- **Twitter**: [@credapp]
+We welcome contributions from the community. Please see our contributing guidelines for more information. []
 
 ---
 
