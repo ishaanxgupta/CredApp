@@ -6,6 +6,7 @@ Uses OpenRouter with Qwen2.5-VL vision model for intelligent document analysis.
 import os
 import json
 import base64
+import asyncio
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import aiohttp
@@ -24,7 +25,7 @@ class OCRService:
         self.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
         self.site_url = os.getenv("SITE_URL", "http://localhost:3000")
         self.site_name = os.getenv("SITE_NAME", "CredHub")
-        self.model = "qwen/qwen2.5-vl-72b-instruct:free"
+        self.model = "google/gemini-2.0-flash-exp:free"
         
         if not self.openrouter_api_key:
             logger.warning("OPENROUTER_API_KEY not set. OCR will use fallback mode.")
@@ -144,44 +145,64 @@ class OCRService:
             Base64 encoded image string with data URI prefix
         """
         try:
+            from PIL import Image
+            import io
+            
             # Check if it's a PDF
             if file_content.startswith(b'%PDF'):
                 logger.info("Converting PDF to image for Vision LLM")
                 
                 # Import PyMuPDF for PDF conversion
                 import fitz  # PyMuPDF
-                from PIL import Image
-                import io
                 
                 # Open PDF from bytes
                 pdf_document = fitz.open(stream=file_content, filetype="pdf")
                 
-                # Convert first page to high-quality image
+                # Convert first page to image (lower quality to reduce size)
                 page = pdf_document[0]
-                mat = fitz.Matrix(2.0, 2.0)  # 2x zoom for better quality
+                mat = fitz.Matrix(1.5, 1.5)  # Reduced from 2.0 to keep size manageable
                 pix = page.get_pixmap(matrix=mat)
                 img_data = pix.tobytes("png")
                 
                 pdf_document.close()
                 
-                # Convert to base64 with data URI
-                img_base64 = base64.b64encode(img_data).decode('utf-8')
-                return f"data:image/png;base64,{img_base64}"
+                # Compress image if too large
+                img = Image.open(io.BytesIO(img_data))
+                
             else:
-                # It's already an image, just convert to base64
+                # It's already an image
                 logger.info("Processing image file for Vision LLM")
-                
-                # Detect image type
-                img_type = "image/png"
-                if file_content.startswith(b'\xff\xd8\xff'):
-                    img_type = "image/jpeg"
-                elif file_content.startswith(b'GIF'):
-                    img_type = "image/gif"
-                elif file_content.startswith(b'\x89PNG'):
-                    img_type = "image/png"
-                
-                img_base64 = base64.b64encode(file_content).decode('utf-8')
-                return f"data:{img_type};base64,{img_base64}"
+                img = Image.open(io.BytesIO(file_content))
+            
+            # Resize if image is too large (max 2048x2048 for free tier)
+            max_size = 2048
+            if img.width > max_size or img.height > max_size:
+                logger.info(f"Resizing image from {img.width}x{img.height}")
+                img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+                logger.info(f"Resized to {img.width}x{img.height}")
+            
+            # Convert to JPEG with compression to reduce size
+            output = io.BytesIO()
+            if img.mode in ('RGBA', 'LA', 'P'):
+                # Convert to RGB if image has transparency
+                rgb_img = Image.new('RGB', img.size, (255, 255, 255))
+                rgb_img.paste(img, mask=img.split()[-1] if img.mode == 'RGBA' else None)
+                rgb_img.save(output, format='JPEG', quality=85, optimize=True)
+            else:
+                img.save(output, format='JPEG', quality=85, optimize=True)
+            
+            img_bytes = output.getvalue()
+            
+            # Check final size (OpenRouter free tier limit ~5MB)
+            size_mb = len(img_bytes) / (1024 * 1024)
+            logger.info(f"Final image size: {size_mb:.2f}MB")
+            
+            if size_mb > 5:
+                logger.warning(f"Image size {size_mb:.2f}MB exceeds 5MB, may fail on free tier")
+            
+            # Convert to base64 with data URI
+            img_base64 = base64.b64encode(img_bytes).decode('utf-8')
+            return f"data:image/jpeg;base64,{img_base64}"
                 
         except Exception as e:
             logger.error(f"Image preparation error: {e}")
@@ -253,69 +274,108 @@ Important:
                 "X-Title": self.site_name
             }
             
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers=headers,
-                    json=payload,
-                    timeout=60
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        logger.error(f"OpenRouter API error: {response.status} - {error_text}")
-                        raise Exception(f"OpenRouter API error: {response.status}")
-                    
-                    result = await response.json()
-                    
-                    # Extract the response content
-                    if not result.get("choices") or len(result["choices"]) == 0:
-                        raise Exception("No response from Vision LLM")
-                    
-                    content = result["choices"][0]["message"]["content"]
-                    logger.info(f"Raw LLM response: {content[:500]}...")
-                    
-                    # Parse JSON from response
-                    try:
-                        # Try to extract JSON if the response contains additional text
-                        if "```json" in content:
-                            # Extract JSON from markdown code block
-                            json_start = content.find("```json") + 7
-                            json_end = content.find("```", json_start)
-                            json_str = content[json_start:json_end].strip()
-                        elif "```" in content:
-                            # Extract from generic code block
-                            json_start = content.find("```") + 3
-                            json_end = content.find("```", json_start)
-                            json_str = content[json_start:json_end].strip()
-                        elif "{" in content:
-                            # Extract first JSON object
-                            json_start = content.find("{")
-                            json_end = content.rfind("}") + 1
-                            json_str = content[json_start:json_end]
-                        else:
-                            json_str = content
-                        
-                        extracted_data = json.loads(json_str)
-                        
-                        # Calculate processing time
-                        processing_time = (datetime.now() - start_time).total_seconds()
-                        
-                        return {
-                            "success": True,
-                            "provider": "openrouter_qwen_vision",
-                            "confidence": 0.95,  # Vision LLMs are highly accurate
-                            "extracted_data": extracted_data,
-                            "metadata": {
-                                "processing_time": processing_time,
-                                "model": self.model,
-                                "text_length": len(extracted_data.get("raw_text", ""))
-                            }
-                        }
-                        
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse JSON from LLM response: {e}")
-                        logger.error(f"Response content: {content}")
-                        raise Exception(f"Invalid JSON response from Vision LLM: {str(e)}")
+            logger.info(f"Sending request to OpenRouter with model: {self.model}")
+            logger.info(f"Image data URI length: {len(image_data_uri)} chars")
+            
+            # Retry logic for transient errors (503, 500)
+            max_retries = 3
+            retry_delay = 2  # seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.post(
+                            "https://openrouter.ai/api/v1/chat/completions",
+                            headers=headers,
+                            json=payload,
+                            timeout=aiohttp.ClientTimeout(total=120)
+                        ) as response:
+                            if response.status != 200:
+                                error_text = await response.text()
+                                
+                                # Check if it's a retryable error (503, 500)
+                                if response.status in [500, 503] and attempt < max_retries - 1:
+                                    logger.warning(f"OpenRouter API error {response.status} (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                                    await asyncio.sleep(retry_delay)
+                                    retry_delay *= 2  # Exponential backoff
+                                    continue
+                                
+                                # Log detailed error
+                                logger.error(f"OpenRouter API error: {response.status}")
+                                logger.error(f"Error response: {error_text[:500]}...")  # Limit error text
+                                logger.error(f"Model: {self.model}, API Key present: {bool(self.openrouter_api_key)}")
+                                
+                                # Provide specific error messages
+                                if response.status == 401:
+                                    raise Exception("OpenRouter API key is invalid or missing. Set OPENROUTER_API_KEY in .env")
+                                elif response.status == 429:
+                                    raise Exception("OpenRouter rate limit exceeded - please try again later")
+                                elif response.status in [500, 503]:
+                                    raise Exception(f"OpenRouter service temporarily unavailable (HTTP {response.status}). Please try again in a few moments.")
+                                else:
+                                    raise Exception(f"OpenRouter API error {response.status}: Check logs for details")
+                            
+                            result = await response.json()
+                            break  # Success, exit retry loop
+                            
+                except asyncio.TimeoutError:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Request timeout (attempt {attempt + 1}/{max_retries}), retrying...")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay *= 2
+                        continue
+                    else:
+                        raise Exception("OpenRouter API request timed out after multiple retries")
+            
+            # Extract the response content
+            if not result.get("choices") or len(result["choices"]) == 0:
+                raise Exception("No response from Vision LLM")
+            
+            content = result["choices"][0]["message"]["content"]
+            logger.info(f"Raw LLM response: {content[:500]}...")
+            
+            # Parse JSON from response
+            try:
+                # Try to extract JSON if the response contains additional text
+                if "```json" in content:
+                    # Extract JSON from markdown code block
+                    json_start = content.find("```json") + 7
+                    json_end = content.find("```", json_start)
+                    json_str = content[json_start:json_end].strip()
+                elif "```" in content:
+                    # Extract from generic code block
+                    json_start = content.find("```") + 3
+                    json_end = content.find("```", json_start)
+                    json_str = content[json_start:json_end].strip()
+                elif "{" in content:
+                    # Extract first JSON object
+                    json_start = content.find("{")
+                    json_end = content.rfind("}") + 1
+                    json_str = content[json_start:json_end]
+                else:
+                    json_str = content
+                
+                extracted_data = json.loads(json_str)
+                
+                # Calculate processing time
+                processing_time = (datetime.now() - start_time).total_seconds()
+                
+                return {
+                    "success": True,
+                    "provider": "openrouter_gemini_vision",
+                    "confidence": 0.95,  # Vision LLMs are highly accurate
+                    "extracted_data": extracted_data,
+                    "metadata": {
+                        "processing_time": processing_time,
+                        "model": self.model,
+                        "text_length": len(extracted_data.get("raw_text", ""))
+                    }
+                }
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON from LLM response: {e}")
+                logger.error(f"Response content: {content}")
+                raise Exception(f"Invalid JSON response from Vision LLM: {str(e)}")
                     
         except Exception as e:
             logger.error(f"Vision LLM OCR error: {e}")
